@@ -7,8 +7,6 @@ dns.setServers(["1.1.1.1","8.8.8.8"]);
 const cookieParser = require("cookie-parser");
 
 dotenv.config();
-app.use(express.json())
-app.use(cookieParser())
 
 async function startServer(){
     if(process.env.NODE_ENV !== 'test'){
