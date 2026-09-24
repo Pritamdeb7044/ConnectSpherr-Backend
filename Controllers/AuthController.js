@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const util = require("util");
 const bcrypt = require("bcrypt");
 const {mailSender} = require("./EmailSender");
+const { verify } = require("crypto");
 
 
 const promisify = util.promisify;
@@ -174,9 +175,10 @@ async function loginHandler(req, res){
         );
 
         res.cookie("jwt", authToken, {
-            maxAge: 1000 * 60 * 60 * 24,
+            maxAge: 7 * 24 * 60 * 60 * 1000,
             httpOnly: true, //it can only be accessed by the server.
             secure: true, //only transfer data via https
+            sameSite: "none"
         });
         res.status(200).json({
             message: "login successfully",
@@ -184,12 +186,13 @@ async function loginHandler(req, res){
             user: user,
         });
     } catch(err){
-        console.log("err", err);
+        console.error("Login catch error:", err);
         res.status(500).json({
-            message: "Required data missing",
+            message: err.message || "Login failed",
             status: "Failed",
-        });
-    }
+        }
+    );
+}
 }
 
 async function logoutHandler(req, res) {
@@ -228,7 +231,7 @@ const otpGenerator = function(){
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-async function forgetPasswordHandler(req, res) {
+async function forgotPasswordHandler(req, res) {
     try{
         const userObject = req.body;
 
@@ -333,94 +336,175 @@ async function forgetPasswordHandler(req, res) {
     }
 }
 
-async function resetPasswordHandler(req, res){
-    try{
-        const userObject = req.body;
+async function verifyOtpHandler(req, res) {
+  try {
+    const { email, otp } = req.body;
 
-        if(!userObject.password || !userObject.confirmPassword || userObject.password !== userObject.confirmPassword || !userObject.otp ){
-            return res.status(401).json({
-                message: "Invalid request",
-                status: "Failure"
-            })
-        }
-
-        if (userObject.email.trim() === "" ||userObject.otp.trim() === "" ||userObject.newPassword.trim() === "" ||userObject.confirmPassword.trim() === ""
-        ) {
-            return res.status(400).json({
-                message: "Fields cannot be empty or contain only whitespace",
-                status: "Failed"
-            });
-        }
-
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        const normalizedEmail = userObject.email.trim().toLowerCase();
-
-        if (!emailRegex.test(normalizedEmail)) {
-            return res.status(400).json({
-                message: "Please provide a valid email address",
-                success: false
-            });
-        }
-
-        const userId = req.params.userId;
-        const user = await UserModel.findById(userId);
-
-        if(!user){
-            return res.status(401).json({
-                message: "Not a valid user",
-                status: "Failure"
-            })
-        }
-
-        if(user.otp == undefined){
-            return res.status(401).json({
-                message: "unauthorized access",
-                status: "Failure"
-            })
-        }
-
-        if(Date.now() > user.otpExpiry){
-            return res.status(401).json({
-                message: "otp expired",
-                status: "failure",
-            });
-        }
-
-        if(user.otp !== userObject.otp){
-            return res.status(401).json({
-                message: "invalid otp",
-                status: "failure",
-            });
-        }
-
-        const newPassword = userObject.password;
-        const salt = bcrypt.genSaltSync(10); //Larger the salt size greater the seacurity and slower the function
-        const hash = await bcrypt.hash(newPassword, salt);
-
-        user.password = hash;
-        user.otp = undefined;
-        user.otpExpiry = undefined;
-
-        await user.save();
-
-        return res.status(200).json({
-            message: "password reset successfully",
-            status: "success"
-        })
-
-    }catch(err){
-        console.log("err", err);
-        res.status(500).json({
-            message: err.message,
-            status: "Failure"
-        })
+    // 1. Validate presence
+    if (!email || !otp) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Email and OTP are required.",
+      });
     }
+
+    if (typeof email !== "string" || typeof otp !== "string") {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Email and OTP must be strings.",
+      });
+    }
+
+    const trimmedOtp = otp.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (trimmedOtp.length !== 6) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "OTP must be a 6-digit code.",
+      });
+    }
+
+    // 2. Find user
+    const user = await UserModel.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(404).json({
+        status: "Failure",
+        message: "No user found with this email.",
+      });
+    }
+
+    // 3. Verify OTP exists
+    if (!user.otp) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "No OTP was requested for this user.",
+      });
+    }
+
+    // 4. Check expiration
+    if (Date.now() > user.otpExpiry) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "OTP has expired. Please request a new one.",
+      });
+    }
+
+    // 5. Check match (cast both to string to avoid type mismatches)
+    if (String(user.otp).trim() !== trimmedOtp) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Invalid OTP. Please check the code and try again.",
+      });
+    }
+
+    // Mark as verified for the subsequent password reset step
+    user.isOtpVerified = true;
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      status: "success",
+      message: "OTP verified successfully.",
+      userId: user._id,
+    });
+  } catch (err) {
+    console.error("verifyOtpHandler error:", err);
+    return res.status(500).json({
+      status: "Failure",
+      message: err.message || "Internal server error during OTP verification.",
+    });
+  }
+}
+
+async function resetPasswordHandler(req, res) {
+  try {
+    const { userId } = req.params;
+    const { password, confirmPassword } = req.body;
+
+    // 1. Validate required fields
+    if (!password || !confirmPassword) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Password and Confirm Password are required.",
+      });
+    }
+
+    if (typeof password !== "string" || typeof confirmPassword !== "string") {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Passwords must be strings.",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Password must be at least 8 characters long.",
+      });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({
+        status: "Failure",
+        message: "Passwords do not match.",
+      });
+    }
+
+    // 2. Find user
+    const user = await UserModel.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        status: "Failure",
+        message: "User not found or invalid user ID.",
+      });
+    }
+
+    // 3. Ensure OTP was verified and not expired
+    if (!user.isOtpVerified && !user.otp) {
+      return res.status(401).json({
+        status: "Failure",
+        message: "Unauthorized request. Please verify OTP first.",
+      });
+    }
+
+    if (user.otpExpiry && Date.now() > user.otpExpiry) {
+      return res.status(401).json({
+        status: "Failure",
+        message: "Session expired. Please request a new OTP.",
+      });
+    }
+
+    // 4. Hash and update password
+    const salt = await bcrypt.genSalt(10);
+    const hash = await bcrypt.hash(password, salt);
+
+    user.password = hash;
+    user.otp = undefined;
+    user.otpExpiry = undefined;
+    user.isOtpVerified = undefined;
+
+    await user.save({ validateBeforeSave: false });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Password has been reset successfully.",
+    });
+  } catch (err) {
+    console.error("resetPasswordHandler error:", err);
+    return res.status(500).json({
+      status: "Failure",
+      message: err.message || "Failed to reset password.",
+    });
+  }
 }
 
 module.exports = {
     signupHandler,
     loginHandler,
     logoutHandler,
-    forgetPasswordHandler,
+    forgotPasswordHandler,
+    verifyOtpHandler,
     resetPasswordHandler
 }

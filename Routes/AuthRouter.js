@@ -19,8 +19,9 @@ const limiter = rateLimit({
 const {
     signupHandler, 
     loginHandler, 
-    forgetPasswordHandler, 
+    forgotPasswordHandler, 
     logoutHandler,
+    verifyOtpHandler,
     resetPasswordHandler
 } = require("../Controllers/AuthController");
 
@@ -28,7 +29,8 @@ authRouter
     .post("/signup", signupHandler)
     .post("/login",limiter, loginHandler)
     .get("/logout", logoutHandler)
-    .patch("/forgetpassword",forgetPasswordHandler)
+    .patch("/forgetpassword",forgotPasswordHandler)
+    .post("/verify-otp", verifyOtpHandler)
     .patch("/resetPassword/:userId", resetPasswordHandler)
 
 module.exports = authRouter;
