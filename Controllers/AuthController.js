@@ -18,6 +18,45 @@ function checkPasswordCharacters(password) {
     };
 }
 
+const getMeHandler = async (req, res) => {
+    try {
+        // User ID is attached by protectedRouteMiddleware
+        const userId = req.user._id;
+
+        const user = await UserModel.findById(userId)
+            .select("name email points location createdAt")
+            .lean();
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found."
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "User details fetched successfully.",
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                points: user.points || 0,
+                location: user.location,
+                createdAt: user.createdAt
+            }
+        });
+
+    } catch (error) {
+        console.error("Get Me Handler Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch user details."
+        });
+    }
+};
+
 async function signupHandler(req, res){
     //create the user
     try{
@@ -506,5 +545,6 @@ module.exports = {
     logoutHandler,
     forgotPasswordHandler,
     verifyOtpHandler,
-    resetPasswordHandler
+    resetPasswordHandler,
+    getMeHandler
 }

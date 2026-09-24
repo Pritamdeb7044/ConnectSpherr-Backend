@@ -179,6 +179,14 @@ async function createActivityHandler(req, res){
         // Since activity must be in future and deadline is 15 minutes
         // before it, deadline must also be in future.
 
+        const currentTime = new Date();
+
+        const startOfDay = new Date(currentTime);
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date(currentTime);
+        endOfDay.setHours(23, 59, 59, 999);
+
         if(parsedRegistrationDeadline.getTime() <= currentTime){
             return res.status(400).json({
                 message: "Activity must start at least 15 minutes from now",
@@ -206,14 +214,6 @@ async function createActivityHandler(req, res){
                 status: "faiure"
             });
         }
-
-        const currentTime = new Date();
-
-        const startOfDay = new Date(currentTime);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date(currentTime);
-        endOfDay.setHours(23, 59, 59, 999);
 
         const activitiesCreatedToday = await ActivityModel.countDocuments({
             createdBy: req.user._id,
@@ -328,101 +328,99 @@ async function createActivityHandler(req, res){
     }
 }
 
-async function getActivityHandler(req, res){
+async function getActivityHandler(req, res) {
+  try {
+    const { activityId } = req.params;
 
-    try{
-        // const userObject = req.body;
-        const {activityId} = req.params;
-
-        if(!activityId){
-            return res.status(400).json({
-                message: "Activity id is missing",
-                status: "failure"
-            })
-        }
-
-        // Remove unnecessary spaces
-        const normalizedActivityId = activityId.trim();
-
-        if(typeof normalizedActivityId !== "string" || normalizedActivityId === ""){
-            return res.status(400).json({
-                message: "Activity id can't be empty",
-                status: "failure"
-            })
-        }
-
-        if (!mongoose.Types.ObjectId.isValid(normalizedActivityId)) {
-            return res.status(400).json({
-                message: "Invalid activity ID",
-                status: "failed"
-            });
-        }
-
-        const activity = await ActivityModel.findById(normalizedActivityId);
-
-        if (!activity) {
-            return res.status(404).json({
-                message: "Activity not found",
-                status: "failed"
-            });
-        }
-
-        // =========================================================
-        // Automatic registration expiry handling
-        // =========================================================
-        //
-        // If the activity is still marked as "active" but the
-        // registration deadline has passed, close the activity.
-        //
-        // closureReason:
-        // "registration_expired"
-        //
-        // This is a lazy/automatic status update. We don't need
-        // a continuous timer or cron job.
-        //
-        const currentTime = new Date();
-
-        if(activity.status === "active" && currentTime >= activity.registrationDeadline){
-            activity.status = "closed";
-            activity.closureReason = "registration_time_expired";
-
-            await activity.save();
-        }
-
-        return res.status(200).json({
-            message: "Activity fetched successfully",
-            activity: activity,
-            status: "success"
-        });
-
-    }catch(err){
-        console.error("Get activity error", err);
-
-        // ========================================================= // MONGOOSE VALIDATION ERROR // ========================================================= 
-        if(err instanceof mongoose.Error.ValidationError){ 
-            return res.status(400).json({ 
-                message: "Activity validation failed", 
-                errors: Object.values(err.errors).map( error => error.message ), 
-                status: "failure" 
-            }); 
-        } 
-        // ========================================================= // MONGOOSE CAST ERROR // ========================================================= 
-        if(err instanceof mongoose.Error.CastError){ 
-            return res.status(400).json({ 
-                message: "Invalid activity data", 
-                status: "failure" 
-            }); 
-        }
-
-        return res.status(500).json({
-            message:"Unable to fetch ativity. Please try again later.",
-            status: "failure"
-        });
+    if (!activityId) {
+      return res.status(400).json({
+        message: "Activity id is missing",
+        status: "failure",
+      });
     }
-    
+
+    const normalizedActivityId = activityId.trim();
+
+    if (!normalizedActivityId) {
+      return res.status(400).json({
+        message: "Activity id can't be empty",
+        status: "failure",
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(normalizedActivityId)) {
+      return res.status(400).json({
+        message: "Invalid activity ID",
+        status: "failed",
+      });
+    }
+
+    // 1. Fetch activity and POPULATE creator details
+    const activity = await ActivityModel.findById(normalizedActivityId).populate(
+      "createdBy",
+      "name email avatar activitiesHosted"
+    );
+
+    if (!activity) {
+      return res.status(404).json({
+        message: "Activity not found",
+        status: "failed",
+      });
+    }
+
+    // Lazy expiration check
+    const currentTime = new Date();
+    if (
+      activity.status === "active" &&
+      activity.registrationDeadline &&
+      currentTime >= new Date(activity.registrationDeadline)
+    ) {
+      activity.status = "closed";
+      activity.closureReason = "registration_time_expired";
+      await activity.save();
+    }
+
+    // 2. Fetch all registered participants for this activity
+    const participations = await ParticipationModel.find({
+      activity: normalizedActivityId,
+      status: "active",
+    }).populate("user", "name email avatar");
+
+    return res.status(200).json({
+      message: "Activity fetched successfully",
+      activity: {
+        ...activity.toObject(),
+        participants: participations,
+        participantCount: participations.length,
+      },
+      status: "success",
+    });
+  } catch (err) {
+    console.error("Get activity error", err);
+
+    if (err instanceof mongoose.Error.ValidationError) {
+      return res.status(400).json({
+        message: "Activity validation failed",
+        errors: Object.values(err.errors).map((error) => error.message),
+        status: "failure",
+      });
+    }
+    if (err instanceof mongoose.Error.CastError) {
+      return res.status(400).json({
+        message: "Invalid activity data",
+        status: "failure",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Unable to fetch activity. Please try again later.",
+      status: "failure",
+    });
+  }
 }
 
 async function updateActivityHandler(req, res){
+    const session = await mongoose.startSession();
     try{
         const userObject = req.body;
         const {activityId} = req.params;
@@ -531,7 +529,7 @@ async function updateActivityHandler(req, res){
             "location",
             "activityDate",
             "activityDuration",
-            "registrationdeadline",
+            "registrationDeadline",
             "maxParticipants"
         ];
 
@@ -682,7 +680,7 @@ async function updateActivityHandler(req, res){
 
 
         //ACTIVITY DATE VALIDATION
-        const finalActivityDate = activity.activityDate;
+        let finalActivityDate = activity.activityDate;
         if (userObject.activityDate !== undefined) {
             if (typeof userObject.activityDate === "string" && userObject.activityDate.trim() === "") {
                 return res.status(400).json({
@@ -748,7 +746,7 @@ async function updateActivityHandler(req, res){
         }
 
         //Registration deadline validation
-        const finalRegistrationDeadline = activity.registrationDeadline;
+        let finalRegistrationDeadline = activity.registrationDeadline;
         if (userObject.registrationDeadline !== undefined){
 
             if(typeof userObject.registrationDeadline === "string" && userObject.registrationDeadline.trim() === ""){
@@ -803,6 +801,8 @@ async function updateActivityHandler(req, res){
             });
         }
 
+        let finalMaxParticipants = activity.maxParticipants;
+
         //MAX PARTICIPANTS VALIDATION
         //Here one updation is required. Suppose the maxParticipant number is 10 and 9 participants have already joined. Now the user want to redure the number of participants to 5 --> this should not be allowed.
         if (userObject.maxParticipants !== undefined) {
@@ -836,8 +836,8 @@ async function updateActivityHandler(req, res){
                     status: "failure"
                 });
             }
+            finalMaxParticipants = userObject.maxParticipants;
             updateData.maxParticipants = userObject.maxParticipants;
-
         }
 
         //SET UPDATED TIME
@@ -962,17 +962,19 @@ async function updateActivityHandler(req, res){
     }
 }
 
-async function getNearbyActivityHandler(req, res){
+async function getNearbyActivityHandler(req, res) {
     try {
 
-        //GET QUERY PARAMETERS
-        const {longitude,latitude,radius} = req.query;
+        // GET QUERY PARAMETERS
+        const { longitude, latitude, radius } = req.query;
 
 
-        //LONGITUDE VALIDATION
-        // Longitude missing
-
-        if (longitude === undefined || longitude === null || longitude.trim() === "") {
+        // LONGITUDE VALIDATION
+        if (
+            longitude === undefined ||
+            longitude === null ||
+            longitude.trim() === ""
+        ) {
             return res.status(400).json({
                 message: "Longitude is required",
                 status: "failure"
@@ -980,9 +982,12 @@ async function getNearbyActivityHandler(req, res){
         }
 
 
-        //LATITUDE VALIDATION
-        // Latitude missing
-        if(latitude === undefined || latitude === null || latitude.trim() === ""){
+        // LATITUDE VALIDATION
+        if (
+            latitude === undefined ||
+            latitude === null ||
+            latitude.trim() === ""
+        ) {
             return res.status(400).json({
                 message: "Latitude is required",
                 status: "failure"
@@ -990,10 +995,12 @@ async function getNearbyActivityHandler(req, res){
         }
 
 
-        //RADIUS VALIDATION
-        // Radius missing
-
-        if(radius === undefined || radius === null || radius.trim() === ""){
+        // RADIUS VALIDATION
+        if (
+            radius === undefined ||
+            radius === null ||
+            radius.trim() === ""
+        ) {
             return res.status(400).json({
                 message: "Radius is required",
                 status: "failure"
@@ -1001,15 +1008,13 @@ async function getNearbyActivityHandler(req, res){
         }
 
 
-        //CONVERT INPUT TO NUMBERS
-
+        // CONVERT INPUT TO NUMBERS
         const parsedLongitude = Number(longitude);
         const parsedLatitude = Number(latitude);
         const parsedRadius = Number(radius);
 
-        // 6. CHECK FOR INVALID NUMBERS
-        // Longitude invalid
 
+        // LONGITUDE VALIDATION
         if (!Number.isFinite(parsedLongitude)) {
             return res.status(400).json({
                 message: "Longitude must be a valid number",
@@ -1017,7 +1022,8 @@ async function getNearbyActivityHandler(req, res){
             });
         }
 
-        // Latitude invalid
+
+        // LATITUDE VALIDATION
         if (!Number.isFinite(parsedLatitude)) {
             return res.status(400).json({
                 message: "Latitude must be a valid number",
@@ -1025,7 +1031,8 @@ async function getNearbyActivityHandler(req, res){
             });
         }
 
-        // Radius not a number
+
+        // RADIUS VALIDATION
         if (!Number.isFinite(parsedRadius)) {
             return res.status(400).json({
                 message: "Radius must be a valid number",
@@ -1033,90 +1040,108 @@ async function getNearbyActivityHandler(req, res){
             });
         }
 
-        // 7. COORDINATE RANGE VALIDATION
-        // Longitude range
+
+        // COORDINATE RANGE VALIDATION
 
         if (parsedLongitude < -180 || parsedLongitude > 180) {
             return res.status(400).json({
-                message:"Longitude must be between -180 and 180",
-                status:"failure"
+                message: "Longitude must be between -180 and 180",
+                status: "failure"
             });
         }
-        // Latitude range
+
+
         if (parsedLatitude < -90 || parsedLatitude > 90) {
             return res.status(400).json({
-                message:"Latitude must be between -90 and 90",
-                status:"failure"
+                message: "Latitude must be between -90 and 90",
+                status: "failure"
             });
         }
 
-        // 8. RADIUS VALIDATION
-        // Radius = 0 or negative
 
+        // RADIUS MUST BE GREATER THAN 0
         if (parsedRadius <= 0) {
             return res.status(400).json({
-                message:"Radius must be greater than 0",
-                status:"failure"
+                message: "Radius must be greater than 0 meters",
+                status: "failure"
             });
         }
 
 
-        /*
-            Prevent extremely large searches.
-
-            Maximum allowed radius = 5,000 meters
-        */
-
+        // MAXIMUM RADIUS = 5 KM
         const MAX_RADIUS = 5000;
+
         if (parsedRadius > MAX_RADIUS) {
             return res.status(400).json({
-                message:`Radius cannot exceed ${MAX_RADIUS} meters`,
-                status:"failure"
+                message: "Radius cannot exceed 5 kilometers",
+                status: "failure"
             });
         }
 
-        // 9. FIND NEARBY ACTIVE ACTIVITIES
 
+        // FIND NEARBY ACTIVE ACTIVITIES
         /*
-            GeoJSON coordinate order:
+            MongoDB $near uses meters for $maxDistance.
 
+            Example:
+            500  = 500 meters
+            1000 = 1 kilometer
+            2000 = 2 kilometers
+            5000 = 5 kilometers
+
+            GeoJSON coordinates:
             [longitude, latitude]
         */
-       const currentTime = new Date();
+
+        const currentTime = new Date();
 
         const nearbyActivities = await ActivityModel.find({
-                status: "active",
-                registrationDeadline: {
-                    $gt: currentTime
-                },
-                location: {
-                    $near: {
-                        $geometry: {
-                            type:"Point",
-                            coordinates: [
-                                parsedLongitude,
-                                parsedLatitude
-                            ]
-                        },
-                        $maxDistance:parsedRadius
-                    }
+            status: "active",
+
+            registrationDeadline: {
+                $gt: currentTime
+            },
+
+            location: {
+                $near: {
+                    $geometry: {
+                        type: "Point",
+                        coordinates: [
+                            parsedLongitude,
+                            parsedLatitude
+                        ]
+                    },
+                    $maxDistance: parsedRadius
                 }
+            }
         });
 
 
-        //SUCCESS RESPONSE
+        // SUCCESS RESPONSE
         return res.status(200).json({
             message: "Nearby activities fetched successfully",
             count: nearbyActivities.length,
-            radius: parsedRadius,
+
+            location: {
+                longitude: parsedLongitude,
+                latitude: parsedLatitude
+            },
+
+            radius: {
+                meters: parsedRadius,
+                kilometers: parsedRadius / 1000
+            },
+
             activities: nearbyActivities,
+
             status: "success"
         });
-    }catch(err){
-        console.error("Get nearby activities error:",err);
+
+    } catch (err) {
+        console.error("Get nearby activities error:", err);
         return res.status(500).json({
-            message:"Unable to fetch nearby activities. Please try again later.",
-            status:"failure"
+            message: "Unable to fetch nearby activities. Please try again later.",
+            status: "failure"
         });
     }
 }

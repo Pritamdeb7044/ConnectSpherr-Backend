@@ -51,12 +51,14 @@ const activityRouter = require("./Routes/ActivityRouter");
 const participationRouter = require("./Routes/ParticipationRouter");
 const rewardRouter = require("./Routes/RewardRouter");
 const notificationRouter = require("./Routes/NotificationRouter");
+const dashboardRouter = require("./Routes/DashboardRouter")
 
 app.use("/api/auth", authRouter);
 app.use("/api/activity", activityRouter);
 app.use("/api/participation", participationRouter);
 app.use("/api/reward", rewardRouter);
 app.use("/api/notification", notificationRouter);
+app.use("/api/dashboard", dashboardRouter);
 
 /*************************** Server Initialization ******************* */
 async function startServer() {

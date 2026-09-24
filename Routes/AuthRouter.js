@@ -22,10 +22,13 @@ const {
     forgotPasswordHandler, 
     logoutHandler,
     verifyOtpHandler,
-    resetPasswordHandler
+    resetPasswordHandler,
+    getMeHandler
 } = require("../Controllers/AuthController");
+const { protectedRouteMiddleware } = require("../Middleware/ProtectedRouteMiddleware");
 
 authRouter
+    .get("/me", protectedRouteMiddleware, getMeHandler)
     .post("/signup", signupHandler)
     .post("/login",limiter, loginHandler)
     .get("/logout", logoutHandler)
