@@ -2,6 +2,7 @@ const UserModel = require("../Models/UserModel")
 const ActivityModel = require("../Models/ActivityModel");
 const ParticipationModel = require("../Models/ParticipationModel");
 const PointTransactionModel = require("../Models/PointTransactionModel");
+const {getParticipantCount} = require("../Services/ParticipationService");
 
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -370,28 +371,22 @@ async function getActivityHandler(req, res) {
 
     // Lazy expiration check
     const currentTime = new Date();
-    if (
-      activity.status === "active" &&
-      activity.registrationDeadline &&
-      currentTime >= new Date(activity.registrationDeadline)
-    ) {
+    if (activity.status === "active" && activity.registrationDeadline && currentTime >= new Date(activity.registrationDeadline)){
       activity.status = "closed";
       activity.closureReason = "registration_time_expired";
       await activity.save();
     }
 
     // 2. Fetch all registered participants for this activity
-    const participations = await ParticipationModel.find({
-      activity: normalizedActivityId,
-      status: "active",
-    }).populate("user", "name email avatar");
+    const participantCount = await getParticipantCount(
+            normalizedActivityId
+        );
 
     return res.status(200).json({
       message: "Activity fetched successfully",
       activity: {
         ...activity.toObject(),
-        participants: participations,
-        participantCount: participations.length,
+        participantCount: participantCount,
       },
       status: "success",
     });
@@ -965,11 +960,21 @@ async function updateActivityHandler(req, res){
 async function getNearbyActivityHandler(req, res) {
     try {
 
-        // GET QUERY PARAMETERS
-        const { longitude, latitude, radius } = req.query;
+        // --------------------------------------------------
+        // 1. GET QUERY PARAMETERS
+        // --------------------------------------------------
+
+        const {
+            longitude,
+            latitude,
+            radius
+        } = req.query;
 
 
-        // LONGITUDE VALIDATION
+        // --------------------------------------------------
+        // 2. LONGITUDE VALIDATION
+        // --------------------------------------------------
+
         if (
             longitude === undefined ||
             longitude === null ||
@@ -982,7 +987,31 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // LATITUDE VALIDATION
+        const parsedLongitude = Number(longitude);
+
+        if (!Number.isFinite(parsedLongitude)) {
+            return res.status(400).json({
+                message: "Longitude must be a valid number",
+                status: "failure"
+            });
+        }
+
+
+        if (
+            parsedLongitude < -180 ||
+            parsedLongitude > 180
+        ) {
+            return res.status(400).json({
+                message: "Longitude must be between -180 and 180",
+                status: "failure"
+            });
+        }
+
+
+        // --------------------------------------------------
+        // 3. LATITUDE VALIDATION
+        // --------------------------------------------------
+
         if (
             latitude === undefined ||
             latitude === null ||
@@ -995,7 +1024,31 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // RADIUS VALIDATION
+        const parsedLatitude = Number(latitude);
+
+        if (!Number.isFinite(parsedLatitude)) {
+            return res.status(400).json({
+                message: "Latitude must be a valid number",
+                status: "failure"
+            });
+        }
+
+
+        if (
+            parsedLatitude < -90 ||
+            parsedLatitude > 90
+        ) {
+            return res.status(400).json({
+                message: "Latitude must be between -90 and 90",
+                status: "failure"
+            });
+        }
+
+
+        // --------------------------------------------------
+        // 4. RADIUS VALIDATION
+        // --------------------------------------------------
+
         if (
             radius === undefined ||
             radius === null ||
@@ -1008,31 +1061,8 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // CONVERT INPUT TO NUMBERS
-        const parsedLongitude = Number(longitude);
-        const parsedLatitude = Number(latitude);
         const parsedRadius = Number(radius);
 
-
-        // LONGITUDE VALIDATION
-        if (!Number.isFinite(parsedLongitude)) {
-            return res.status(400).json({
-                message: "Longitude must be a valid number",
-                status: "failure"
-            });
-        }
-
-
-        // LATITUDE VALIDATION
-        if (!Number.isFinite(parsedLatitude)) {
-            return res.status(400).json({
-                message: "Latitude must be a valid number",
-                status: "failure"
-            });
-        }
-
-
-        // RADIUS VALIDATION
         if (!Number.isFinite(parsedRadius)) {
             return res.status(400).json({
                 message: "Radius must be a valid number",
@@ -1041,25 +1071,6 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // COORDINATE RANGE VALIDATION
-
-        if (parsedLongitude < -180 || parsedLongitude > 180) {
-            return res.status(400).json({
-                message: "Longitude must be between -180 and 180",
-                status: "failure"
-            });
-        }
-
-
-        if (parsedLatitude < -90 || parsedLatitude > 90) {
-            return res.status(400).json({
-                message: "Latitude must be between -90 and 90",
-                status: "failure"
-            });
-        }
-
-
-        // RADIUS MUST BE GREATER THAN 0
         if (parsedRadius <= 0) {
             return res.status(400).json({
                 message: "Radius must be greater than 0 meters",
@@ -1068,7 +1079,10 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // MAXIMUM RADIUS = 5 KM
+        // --------------------------------------------------
+        // 5. MAXIMUM RADIUS = 5 KM
+        // --------------------------------------------------
+
         const MAX_RADIUS = 5000;
 
         if (parsedRadius > MAX_RADIUS) {
@@ -1079,69 +1093,250 @@ async function getNearbyActivityHandler(req, res) {
         }
 
 
-        // FIND NEARBY ACTIVE ACTIVITIES
-        /*
-            MongoDB $near uses meters for $maxDistance.
+        // --------------------------------------------------
+        // 6. CURRENT TIME
+        // --------------------------------------------------
 
-            Example:
+        const currentTime = new Date();
+
+
+        // --------------------------------------------------
+        // 7. FIND NEARBY ACTIVITIES
+        // --------------------------------------------------
+
+        /*
+            MongoDB uses meters for $maxDistance.
+
             500  = 500 meters
             1000 = 1 kilometer
             2000 = 2 kilometers
             5000 = 5 kilometers
 
-            GeoJSON coordinates:
+            GeoJSON coordinate order:
+
             [longitude, latitude]
         */
 
-        const currentTime = new Date();
+        const nearbyActivities =
+            await ActivityModel.aggregate([
 
-        const nearbyActivities = await ActivityModel.find({
-            status: "active",
+                // ------------------------------------------
+                // Find activities within radius
+                // ------------------------------------------
 
-            registrationDeadline: {
-                $gt: currentTime
-            },
+                {
+                    $geoNear: {
+                        near: {
+                            type: "Point",
+                            coordinates: [
+                                parsedLongitude,
+                                parsedLatitude
+                            ]
+                        },
 
-            location: {
-                $near: {
-                    $geometry: {
-                        type: "Point",
-                        coordinates: [
-                            parsedLongitude,
-                            parsedLatitude
-                        ]
-                    },
-                    $maxDistance: parsedRadius
+                        distanceField: "distance",
+
+                        maxDistance: parsedRadius,
+
+                        spherical: true,
+
+                        query: {
+                            status: "active",
+
+                            registrationDeadline: {
+                                $gt: currentTime
+                            }
+                        }
+                    }
+                },
+
+
+                // ------------------------------------------
+                // Count active participants
+                // ------------------------------------------
+
+                {
+                    $lookup: {
+                        from: "participations",
+
+                        let: {
+                            activityId: "$_id"
+                        },
+
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            {
+                                                $eq: [
+                                                    "$activity",
+                                                    "$$activityId"
+                                                ]
+                                            },
+
+                                            {
+                                                $eq: [
+                                                    "$status",
+                                                    "active"
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                }
+                            },
+
+                            {
+                                $count: "count"
+                            }
+                        ],
+
+                        as: "participantStats"
+                    }
+                },
+
+
+                // ------------------------------------------
+                // Convert count array into number
+                // ------------------------------------------
+
+                {
+                    $addFields: {
+
+                        participantCount: {
+                            $ifNull: [
+                                {
+                                    $arrayElemAt: [
+                                        "$participantStats.count",
+                                        0
+                                    ]
+                                },
+
+                                0
+                            ]
+                        }
+                    }
+                },
+
+
+                // ------------------------------------------
+                // Remove temporary participantStats
+                // ------------------------------------------
+
+                {
+                    $project: {
+                        participantStats: 0
+                    }
                 }
-            }
-        });
+
+            ]);
 
 
-        // SUCCESS RESPONSE
+        // --------------------------------------------------
+        // 8. FORMAT ACTIVITIES
+        // --------------------------------------------------
+
+        const formattedActivities =
+            nearbyActivities.map(
+                (activity) => {
+
+                    const participantCount =
+                        activity.participantCount || 0;
+
+
+                    const maxParticipants =
+                        activity.maxParticipants || 0;
+
+
+                    return {
+
+                        ...activity,
+
+                        // Distance from user's location
+                        distance: Math.round(
+                            activity.distance
+                        ),
+
+                        // Number of currently active participants
+                        participantCount,
+
+                        // Maximum capacity
+                        maxParticipants,
+
+                        // Useful for frontend progress bar
+                        spotsFilled:
+                            `${participantCount} / ${maxParticipants}`,
+
+                        participationPercentage:
+                            maxParticipants > 0
+                                ? Math.min(
+                                    100,
+                                    Math.round(
+                                        (
+                                            participantCount /
+                                            maxParticipants
+                                        ) * 100
+                                    )
+                                )
+                                : 0
+                    };
+                }
+            );
+
+
+        // --------------------------------------------------
+        // 9. SUCCESS RESPONSE
+        // --------------------------------------------------
+
         return res.status(200).json({
-            message: "Nearby activities fetched successfully",
-            count: nearbyActivities.length,
+
+            message:
+                "Nearby activities fetched successfully",
+
+            count:
+                formattedActivities.length,
 
             location: {
-                longitude: parsedLongitude,
-                latitude: parsedLatitude
+
+                longitude:
+                    parsedLongitude,
+
+                latitude:
+                    parsedLatitude
             },
 
             radius: {
-                meters: parsedRadius,
-                kilometers: parsedRadius / 1000
+
+                meters:
+                    parsedRadius,
+
+                kilometers:
+                    parsedRadius / 1000
             },
 
-            activities: nearbyActivities,
+            activities:
+                formattedActivities,
 
-            status: "success"
+            status:
+                "success"
         });
 
+
     } catch (err) {
-        console.error("Get nearby activities error:", err);
+
+        console.error(
+            "Get nearby activities error:",
+            err
+        );
+
+
         return res.status(500).json({
-            message: "Unable to fetch nearby activities. Please try again later.",
-            status: "failure"
+
+            message:
+                "Unable to fetch nearby activities. Please try again later.",
+
+            status:
+                "failure"
         });
     }
 }
