@@ -330,88 +330,181 @@ async function createActivityHandler(req, res){
 }
 
 async function getActivityHandler(req, res) {
-  try {
-    const { activityId } = req.params;
 
-    if (!activityId) {
-      return res.status(400).json({
-        message: "Activity id is missing",
-        status: "failure",
-      });
-    }
+    try {
 
-    const normalizedActivityId = activityId.trim();
+        // =========================================================
+        // 1. ACTIVITY ID
+        // =========================================================
 
-    if (!normalizedActivityId) {
-      return res.status(400).json({
-        message: "Activity id can't be empty",
-        status: "failure",
-      });
-    }
+        const { activityId } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(normalizedActivityId)) {
-      return res.status(400).json({
-        message: "Invalid activity ID",
-        status: "failed",
-      });
-    }
+        if (
+            activityId === undefined ||
+            activityId === null
+        ) {
+            return res.status(400).json({
+                message:
+                    "Activity id is missing",
+                status: "failure"
+            });
+        }
 
-    // 1. Fetch activity and POPULATE creator details
-    const activity = await ActivityModel.findById(normalizedActivityId).populate(
-      "createdBy",
-      "name email avatar activitiesHosted"
-    );
+        if (
+            typeof activityId !== "string" ||
+            activityId.trim() === ""
+        ) {
+            return res.status(400).json({
+                message:
+                    "Activity id can't be empty",
+                status: "failure"
+            });
+        }
 
-    if (!activity) {
-      return res.status(404).json({
-        message: "Activity not found",
-        status: "failed",
-      });
-    }
+        const normalizedActivityId =
+            activityId.trim();
 
-    // Lazy expiration check
-    const currentTime = new Date();
-    if (activity.status === "active" && activity.registrationDeadline && currentTime >= new Date(activity.registrationDeadline)){
-      activity.status = "closed";
-      activity.closureReason = "registration_time_expired";
-      await activity.save();
-    }
+        if (
+            !mongoose.Types.ObjectId.isValid(
+                normalizedActivityId
+            )
+        ) {
+            return res.status(400).json({
+                message:
+                    "Invalid activity ID",
+                status: "failure"
+            });
+        }
 
-    // 2. Fetch all registered participants for this activity
-    const participantCount = await getParticipantCount(
-            normalizedActivityId
+        // =========================================================
+        // 2. FETCH ACTIVITY
+        // =========================================================
+
+        const activity =
+            await ActivityModel
+                .findById(normalizedActivityId)
+                .populate(
+                    "createdBy",
+                    "name email avatar activitiesHosted"
+                );
+
+        if (!activity) {
+            return res.status(404).json({
+                message:
+                    "Activity not found",
+                status: "failure"
+            });
+        }
+
+        // =========================================================
+        // 3. LAZY REGISTRATION DEADLINE CLOSURE
+        // =========================================================
+
+        const currentTime =
+            new Date();
+
+        if (
+            activity.status === "active" &&
+            activity.registrationDeadline &&
+            currentTime >=
+                new Date(
+                    activity.registrationDeadline
+                )
+        ) {
+
+            activity.status =
+                "closed";
+
+            activity.closureReason =
+                "registration_time_expired";
+
+            await activity.save();
+        }
+
+        // =========================================================
+        // 4. GET JOINED PARTICIPANT COUNT
+        // =========================================================
+        //
+        // IMPORTANT:
+        //
+        // This helper uses:
+        //
+        // activityId
+        // status = "joined"
+        //
+        // =========================================================
+
+        const participantCount =
+            await getJoinedParticipantCount(
+                activity._id
+            );
+
+        // =========================================================
+        // 5. SUCCESS
+        // =========================================================
+
+        return res.status(200).json({
+
+            message:
+                "Activity fetched successfully",
+
+            activity: {
+
+                ...activity.toObject(),
+
+                participantCount:
+                    participantCount
+            },
+
+            status:
+                "success"
+        });
+
+    } catch (err) {
+
+        console.error(
+            "Get activity error:",
+            err
         );
 
-    return res.status(200).json({
-      message: "Activity fetched successfully",
-      activity: {
-        ...activity.toObject(),
-        participantCount: participantCount,
-      },
-      status: "success",
-    });
-  } catch (err) {
-    console.error("Get activity error", err);
+        if (
+            err instanceof
+            mongoose.Error.ValidationError
+        ) {
+            return res.status(400).json({
+                message:
+                    "Activity validation failed",
+                errors:
+                    Object.values(
+                        err.errors
+                    ).map(
+                        error =>
+                            error.message
+                    ),
+                status:
+                    "failure"
+            });
+        }
 
-    if (err instanceof mongoose.Error.ValidationError) {
-      return res.status(400).json({
-        message: "Activity validation failed",
-        errors: Object.values(err.errors).map((error) => error.message),
-        status: "failure",
-      });
-    }
-    if (err instanceof mongoose.Error.CastError) {
-      return res.status(400).json({
-        message: "Invalid activity data",
-        status: "failure",
-      });
-    }
+        if (
+            err instanceof
+            mongoose.Error.CastError
+        ) {
+            return res.status(400).json({
+                message:
+                    "Invalid activity data",
+                status:
+                    "failure"
+            });
+        }
 
-    return res.status(500).json({
-      message: "Unable to fetch activity. Please try again later.",
-      status: "failure",
-    });
-  }
+        return res.status(500).json({
+            message:
+                "Unable to fetch activity. Please try again later.",
+            status:
+                "failure"
+        });
+    }
 }
 
 async function updateActivityHandler(req, res){
@@ -958,11 +1051,12 @@ async function updateActivityHandler(req, res){
 }
 
 async function getNearbyActivityHandler(req, res) {
+
     try {
 
-        // --------------------------------------------------
-        // 1. GET QUERY PARAMETERS
-        // --------------------------------------------------
+        // =========================================================
+        // 1. QUERY PARAMETERS
+        // =========================================================
 
         const {
             longitude,
@@ -970,162 +1064,149 @@ async function getNearbyActivityHandler(req, res) {
             radius
         } = req.query;
 
-
-        // --------------------------------------------------
-        // 2. LONGITUDE VALIDATION
-        // --------------------------------------------------
+        // =========================================================
+        // 2. LONGITUDE
+        // =========================================================
 
         if (
             longitude === undefined ||
             longitude === null ||
-            longitude.trim() === ""
+            String(longitude).trim() === ""
         ) {
             return res.status(400).json({
-                message: "Longitude is required",
+                message:
+                    "Longitude is required",
                 status: "failure"
             });
         }
 
+        const parsedLongitude =
+            Number(longitude);
 
-        const parsedLongitude = Number(longitude);
-
-        if (!Number.isFinite(parsedLongitude)) {
+        if (
+            !Number.isFinite(parsedLongitude)
+        ) {
             return res.status(400).json({
-                message: "Longitude must be a valid number",
+                message:
+                    "Longitude must be a valid number",
                 status: "failure"
             });
         }
-
 
         if (
             parsedLongitude < -180 ||
             parsedLongitude > 180
         ) {
             return res.status(400).json({
-                message: "Longitude must be between -180 and 180",
+                message:
+                    "Longitude must be between -180 and 180",
                 status: "failure"
             });
         }
 
-
-        // --------------------------------------------------
-        // 3. LATITUDE VALIDATION
-        // --------------------------------------------------
+        // =========================================================
+        // 3. LATITUDE
+        // =========================================================
 
         if (
             latitude === undefined ||
             latitude === null ||
-            latitude.trim() === ""
+            String(latitude).trim() === ""
         ) {
             return res.status(400).json({
-                message: "Latitude is required",
+                message:
+                    "Latitude is required",
                 status: "failure"
             });
         }
 
+        const parsedLatitude =
+            Number(latitude);
 
-        const parsedLatitude = Number(latitude);
-
-        if (!Number.isFinite(parsedLatitude)) {
+        if (
+            !Number.isFinite(parsedLatitude)
+        ) {
             return res.status(400).json({
-                message: "Latitude must be a valid number",
+                message:
+                    "Latitude must be a valid number",
                 status: "failure"
             });
         }
-
 
         if (
             parsedLatitude < -90 ||
             parsedLatitude > 90
         ) {
             return res.status(400).json({
-                message: "Latitude must be between -90 and 90",
+                message:
+                    "Latitude must be between -90 and 90",
                 status: "failure"
             });
         }
 
-
-        // --------------------------------------------------
-        // 4. RADIUS VALIDATION
-        // --------------------------------------------------
+        // =========================================================
+        // 4. RADIUS
+        // =========================================================
 
         if (
             radius === undefined ||
             radius === null ||
-            radius.trim() === ""
+            String(radius).trim() === ""
         ) {
             return res.status(400).json({
-                message: "Radius is required",
+                message:
+                    "Radius is required",
                 status: "failure"
             });
         }
 
+        const parsedRadius =
+            Number(radius);
 
-        const parsedRadius = Number(radius);
-
-        if (!Number.isFinite(parsedRadius)) {
+        if (
+            !Number.isFinite(parsedRadius)
+        ) {
             return res.status(400).json({
-                message: "Radius must be a valid number",
+                message:
+                    "Radius must be a valid number",
                 status: "failure"
             });
         }
-
 
         if (parsedRadius <= 0) {
             return res.status(400).json({
-                message: "Radius must be greater than 0 meters",
+                message:
+                    "Radius must be greater than 0 meters",
                 status: "failure"
             });
         }
-
-
-        // --------------------------------------------------
-        // 5. MAXIMUM RADIUS = 5 KM
-        // --------------------------------------------------
 
         const MAX_RADIUS = 5000;
 
         if (parsedRadius > MAX_RADIUS) {
             return res.status(400).json({
-                message: "Radius cannot exceed 5 kilometers",
+                message:
+                    "Radius cannot exceed 5 kilometers",
                 status: "failure"
             });
         }
 
-
-        // --------------------------------------------------
-        // 6. CURRENT TIME
-        // --------------------------------------------------
+        // =========================================================
+        // 5. CURRENT TIME
+        // =========================================================
 
         const currentTime = new Date();
 
-
-        // --------------------------------------------------
-        // 7. FIND NEARBY ACTIVITIES
-        // --------------------------------------------------
-
-        /*
-            MongoDB uses meters for $maxDistance.
-
-            500  = 500 meters
-            1000 = 1 kilometer
-            2000 = 2 kilometers
-            5000 = 5 kilometers
-
-            GeoJSON coordinate order:
-
-            [longitude, latitude]
-        */
+        // =========================================================
+        // 6. GEO SEARCH
+        // =========================================================
 
         const nearbyActivities =
             await ActivityModel.aggregate([
 
-                // ------------------------------------------
-                // Find activities within radius
-                // ------------------------------------------
-
                 {
                     $geoNear: {
+
                         near: {
                             type: "Point",
                             coordinates: [
@@ -1134,14 +1215,23 @@ async function getNearbyActivityHandler(req, res) {
                             ]
                         },
 
-                        distanceField: "distance",
+                        distanceField:
+                            "distance",
 
-                        maxDistance: parsedRadius,
+                        maxDistance:
+                            parsedRadius,
 
-                        spherical: true,
+                        spherical:
+                            true,
 
                         query: {
-                            status: "active",
+
+                            status:
+                                "active",
+
+                            activityDate: {
+                                $gt: currentTime
+                            },
 
                             registrationDeadline: {
                                 $gt: currentTime
@@ -1150,28 +1240,44 @@ async function getNearbyActivityHandler(req, res) {
                     }
                 },
 
-
-                // ------------------------------------------
-                // Count active participants
-                // ------------------------------------------
+                // =================================================
+                // 7. PARTICIPATION LOOKUP
+                // =================================================
+                //
+                // THIS IS THE IMPORTANT PART.
+                //
+                // ParticipationModel:
+                //
+                // userId
+                // activityId
+                // status = "joined"
+                //
+                // =================================================
 
                 {
                     $lookup: {
-                        from: "participations",
+
+                        from:
+                            "participations",
 
                         let: {
-                            activityId: "$_id"
+                            currentActivityId:
+                                "$_id"
                         },
 
                         pipeline: [
+
                             {
                                 $match: {
+
                                     $expr: {
+
                                         $and: [
+
                                             {
                                                 $eq: [
-                                                    "$activity",
-                                                    "$$activityId"
+                                                    "$activityId",
+                                                    "$$currentActivityId"
                                                 ]
                                             },
 
@@ -1181,112 +1287,189 @@ async function getNearbyActivityHandler(req, res) {
                                                     "joined"
                                                 ]
                                             }
+
                                         ]
                                     }
                                 }
-                            },
-
-                            {
-                                $count: "count"
                             }
+
                         ],
 
-                        as: "participantStats"
+                        as:
+                            "joinedParticipants"
                     }
                 },
 
-
-                // ------------------------------------------
-                // Convert count array into number
-                // ------------------------------------------
+                // =================================================
+                // 8. COUNT JOINED PARTICIPANTS
+                // =================================================
 
                 {
                     $addFields: {
 
                         participantCount: {
-                            $ifNull: [
-                                {
-                                    $arrayElemAt: [
-                                        "$participantStats.count",
-                                        0
-                                    ]
-                                },
-
-                                0
-                            ]
+                            $size:
+                                "$joinedParticipants"
                         }
+
                     }
                 },
 
-
-                // ------------------------------------------
-                // Remove temporary participantStats
-                // ------------------------------------------
+                // =================================================
+                // 9. REMOVE TEMPORARY ARRAY
+                // =================================================
 
                 {
                     $project: {
-                        participantStats: 0
+                        joinedParticipants: 0
+                    }
+                },
+
+                // =================================================
+                // 10. SORT BY DISTANCE
+                // =================================================
+
+                {
+                    $sort: {
+                        distance: 1
                     }
                 }
-
             ]);
 
-
-        // --------------------------------------------------
-        // 8. FORMAT ACTIVITIES
-        // --------------------------------------------------
+        // =========================================================
+        // 11. FORMAT ACTIVITIES
+        // =========================================================
 
         const formattedActivities =
             nearbyActivities.map(
                 (activity) => {
 
                     const participantCount =
-                        activity.participantCount || 0;
-
+                        Number(
+                            activity.participantCount
+                        ) || 0;
 
                     const maxParticipants =
-                        activity.maxParticipants || 0;
+                        Number(
+                            activity.maxParticipants
+                        ) || 0;
 
+                    // ---------------------------------------------
+                    // PARTICIPATION PERCENTAGE
+                    // ---------------------------------------------
+
+                    const participationPercentage =
+                        maxParticipants > 0
+                            ? Math.min(
+                                100,
+                                Math.round(
+                                    (
+                                        participantCount /
+                                        maxParticipants
+                                    ) * 100
+                                )
+                            )
+                            : 0;
+
+                    // ---------------------------------------------
+                    // REGISTRATION STATUS
+                    // ---------------------------------------------
+
+                    let registrationStatus =
+                        "Registration Open";
+
+                    if (
+                        activity.registrationDeadline &&
+                        new Date(
+                            activity.registrationDeadline
+                        ) <= currentTime
+                    ) {
+                        registrationStatus =
+                            "Registration Closed";
+                    }
+
+                    // ---------------------------------------------
+                    // FULL
+                    // ---------------------------------------------
+
+                    if (
+                        participantCount >=
+                        maxParticipants
+                    ) {
+                        registrationStatus =
+                            "Full";
+                    }
+
+                    // ---------------------------------------------
+                    // RESPONSE
+                    // ---------------------------------------------
 
                     return {
 
-                        ...activity,
+                        _id:
+                            activity._id,
 
-                        // Distance from user's location
-                        distance: Math.round(
-                            activity.distance
-                        ),
+                        title:
+                            activity.title,
 
-                        // Number of currently active participants
-                        participantCount,
+                        description:
+                            activity.description,
 
-                        // Maximum capacity
-                        maxParticipants,
+                        createdBy:
+                            activity.createdBy,
 
-                        // Useful for frontend progress bar
+                        location:
+                            activity.location,
+
+                        activityDate:
+                            activity.activityDate,
+
+                        activityDuration:
+                            activity.activityDuration,
+
+                        registrationDeadline:
+                            activity.registrationDeadline,
+
+                        maxParticipants:
+                            maxParticipants,
+
+                        status:
+                            activity.status,
+
+                        closureReason:
+                            activity.closureReason,
+
+                        createdAt:
+                            activity.createdAt,
+
+                        updatedAt:
+                            activity.updatedAt,
+
+                        // Frontend needs distance
+                        distance:
+                            Math.round(
+                                activity.distance
+                            ),
+
+                        // Joined participation count
+                        participantCount:
+                            participantCount,
+
                         spotsFilled:
                             `${participantCount} / ${maxParticipants}`,
 
                         participationPercentage:
-                            maxParticipants > 0
-                                ? Math.min(
-                                    100,
-                                    Math.round(
-                                        (
-                                            participantCount /
-                                            maxParticipants
-                                        ) * 100
-                                    )
-                                )
-                                : 0
+                            participationPercentage,
+
+                        registrationStatus:
+                            registrationStatus
                     };
                 }
             );
 
-
-        // --------------------------------------------------
-        // 9. SUCCESS RESPONSE
-        // --------------------------------------------------
+        // =========================================================
+        // 12. RESPONSE
+        // =========================================================
 
         return res.status(200).json({
 
@@ -1321,7 +1504,6 @@ async function getNearbyActivityHandler(req, res) {
                 "success"
         });
 
-
     } catch (err) {
 
         console.error(
@@ -1329,14 +1511,18 @@ async function getNearbyActivityHandler(req, res) {
             err
         );
 
+        if (err.name === "CastError") {
+            return res.status(400).json({
+                message:
+                    "Invalid activity data",
+                status: "failure"
+            });
+        }
 
         return res.status(500).json({
-
             message:
                 "Unable to fetch nearby activities. Please try again later.",
-
-            status:
-                "failure"
+            status: "failure"
         });
     }
 }

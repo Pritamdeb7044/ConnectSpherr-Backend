@@ -1,14 +1,52 @@
+const mongoose = require("mongoose");
 const ParticipationModel = require("../Models/ParticipationModel");
 
-async function getParticipantCount(activityId) {
-    const participantCount = await ParticipationModel.countDocuments({
-        activity: activityId,
-        status: "active",
-    });
+
+/**
+ * Get the number of currently joined participants
+ * for a particular activity.
+ *
+ * ParticipationModel fields:
+ *
+ * userId
+ * activityId
+ * status
+ *
+ * Active participation:
+ *
+ * status = "joined"
+ */
+async function getJoinedParticipantCount(activityId) {
+
+    if (
+        activityId === undefined ||
+        activityId === null
+    ) {
+        throw new Error(
+            "Activity ID is required"
+        );
+    }
+
+    if (
+        !mongoose.Types.ObjectId.isValid(
+            activityId
+        )
+    ) {
+        throw new Error(
+            "Invalid Activity ID"
+        );
+    }
+
+    const participantCount =
+        await ParticipationModel.countDocuments({
+            activityId: activityId,
+            status: "joined"
+        });
 
     return participantCount;
 }
 
+
 module.exports = {
-    getParticipantCount,
+    getJoinedParticipantCount
 };

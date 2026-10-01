@@ -6,453 +6,845 @@ const ParticipationModel = require("../Models/ParticipationModel");
 const RewardModel = require("../Models/RewardModel");
 
 const getDashboardHandler = async (req, res) => {
-  try {
-    // --------------------------------------------------
-    // 1. Verify authenticated user
-    // --------------------------------------------------
-    if (!req.user || !req.user._id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized access.",
-      });
-    }
+    try {
 
-    const userId = req.user._id;
+        // =========================================================
+        // 1. AUTHENTICATION VALIDATION
+        // =========================================================
 
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid authenticated user.",
-      });
-    }
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized access.",
+            });
+        }
 
-    const userObjectId = new mongoose.Types.ObjectId(userId);
+        const userId = req.user._id;
 
-    // --------------------------------------------------
-    // 2. Get query parameters
-    // --------------------------------------------------
-    const { longitude, latitude, radius } = req.query;
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid authenticated user.",
+            });
+        }
 
-    // --------------------------------------------------
-    // 3. Validate longitude
-    // --------------------------------------------------
-    if (
-      longitude === undefined ||
-      longitude === null ||
-      String(longitude).trim() === ""
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Longitude is required.",
-      });
-    }
+        const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    const parsedLongitude = Number(longitude);
 
-    if (!Number.isFinite(parsedLongitude)) {
-      return res.status(400).json({
-        success: false,
-        message: "Longitude must be a valid number.",
-      });
-    }
+        // =========================================================
+        // 2. GET QUERY PARAMETERS
+        // =========================================================
 
-    if (parsedLongitude < -180 || parsedLongitude > 180) {
-      return res.status(400).json({
-        success: false,
-        message: "Longitude must be between -180 and 180.",
-      });
-    }
+        const {
+            longitude,
+            latitude,
+            radius
+        } = req.query;
 
-    // --------------------------------------------------
-    // 4. Validate latitude
-    // --------------------------------------------------
-    if (
-      latitude === undefined ||
-      latitude === null ||
-      String(latitude).trim() === ""
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Latitude is required.",
-      });
-    }
 
-    const parsedLatitude = Number(latitude);
+        // =========================================================
+        // 3. LONGITUDE VALIDATION
+        // =========================================================
 
-    if (!Number.isFinite(parsedLatitude)) {
-      return res.status(400).json({
-        success: false,
-        message: "Latitude must be a valid number.",
-      });
-    }
+        if (
+            longitude === undefined ||
+            longitude === null ||
+            String(longitude).trim() === ""
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Longitude is required.",
+            });
+        }
 
-    if (parsedLatitude < -90 || parsedLatitude > 90) {
-      return res.status(400).json({
-        success: false,
-        message: "Latitude must be between -90 and 90.",
-      });
-    }
+        const parsedLongitude = Number(longitude);
 
-    // --------------------------------------------------
-    // 5. Validate radius
-    // --------------------------------------------------
-    const parsedRadius =
-      radius === undefined || radius === null || String(radius).trim() === ""
-        ? 500
-        : Number(radius);
+        if (!Number.isFinite(parsedLongitude)) {
+            return res.status(400).json({
+                success: false,
+                message: "Longitude must be a valid number.",
+            });
+        }
 
-    if (!Number.isFinite(parsedRadius)) {
-      return res.status(400).json({
-        success: false,
-        message: "Radius must be a valid number.",
-      });
-    }
+        if (
+            parsedLongitude < -180 ||
+            parsedLongitude > 180
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Longitude must be between -180 and 180.",
+            });
+        }
 
-    if (parsedRadius <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Radius must be greater than 0.",
-      });
-    }
 
-    const MAX_RADIUS = 5000;
-    if (parsedRadius > MAX_RADIUS) {
-      return res.status(400).json({
-        success: false,
-        message: "Radius cannot exceed 5000 meters.",
-      });
-    }
+        // =========================================================
+        // 4. LATITUDE VALIDATION
+        // =========================================================
 
-    // --------------------------------------------------
-    // 6. Current time
-    // --------------------------------------------------
-    const now = new Date();
+        if (
+            latitude === undefined ||
+            latitude === null ||
+            String(latitude).trim() === ""
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Latitude is required.",
+            });
+        }
 
-    // --------------------------------------------------
-    // 7. Fetch current user
-    // --------------------------------------------------
-    const user = await UserModel.findById(userObjectId)
-      .select("_id name email points location createdAt")
-      .lean();
+        const parsedLatitude = Number(latitude);
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found.",
-      });
-    }
+        if (!Number.isFinite(parsedLatitude)) {
+            return res.status(400).json({
+                success: false,
+                message: "Latitude must be a valid number.",
+            });
+        }
 
-    // --------------------------------------------------
-    // 8. Fetch user's participation records
-    // --------------------------------------------------
-    const participationRecords = await ParticipationModel.find({
-  user: userObjectId,
-})
-  .select("activity status createdAt")
-  .populate({
-    path: "activity",
-    select: `
-      _id
-      title
-      description
-      createdBy
-      activityDate
-      activityDuration
-      maxParticipants
-      registrationDeadline
-      location
-      status
-      points
-    `,
-    populate: {
-      path: "createdBy",
-      select: "_id name",
-    },
-  })
-  .lean();
+        if (
+            parsedLatitude < -90 ||
+            parsedLatitude > 90
+        ) {
+            return res.status(400).json({
+                success: false,
+                message: "Latitude must be between -90 and 90.",
+            });
+        }
 
-    // --------------------------------------------------
-    // 9. Active participations
-    // --------------------------------------------------
-    const activeParticipations = participationRecords.filter(
-  (participation) =>
-    participation.status === "active" &&
-    participation.activity
-);
 
-    // --------------------------------------------------
-    // 10. Activities joined
-    // --------------------------------------------------
-    const activitiesJoined = activeParticipations.length;
+        // =========================================================
+        // 5. RADIUS VALIDATION
+        // =========================================================
 
-    // --------------------------------------------------
-    // 11. Activities created by user
-    // --------------------------------------------------
-    const activitiesCreated = await ActivityModel.countDocuments({
-      createdBy: userObjectId,
-    });
+        const parsedRadius =
+            radius === undefined ||
+            radius === null ||
+            String(radius).trim() === ""
+                ? 500
+                : Number(radius);
 
-    // --------------------------------------------------
-    // 12. Upcoming activities
-    // --------------------------------------------------
-    const upcomingActivities = activeParticipations
-      .filter(
-        (participation) =>
-          participation.activity &&
-          new Date(participation.activity.activityDate) > now
-      )
-      .sort(
-        (a, b) =>
-          new Date(a.activity.activityDate) -
-          new Date(b.activity.activityDate)
-      )
-      .slice(0, 5)
-      .map((participation) => {
-        const activity = participation.activity;
+        if (!Number.isFinite(parsedRadius)) {
+            return res.status(400).json({
+                success: false,
+                message: "Radius must be a valid number.",
+            });
+        }
 
-        return {
-          activityId: activity._id,
-          title: activity.title,
-          activityDate: activity.activityDate,
-          activityDuration: activity.activityDuration,
-          registrationDeadline: activity.registrationDeadline,
-          host: activity.createdBy?.name || "Unknown",
-        };
-      });
+        if (parsedRadius <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Radius must be greater than 0.",
+            });
+        }
 
-    // --------------------------------------------------
-    // 13. Upcoming plans count
-    // --------------------------------------------------
-    const upcomingPlans = upcomingActivities.length;
+        const MAX_RADIUS = 5000;
 
-    // --------------------------------------------------
-    // 14. Nearby activities with safe lookup & participant counting
-    // --------------------------------------------------
-    const nearbyActivities = await ActivityModel.aggregate([
-      // Geo search
-      {
-        $geoNear: {
-          near: {
-            type: "Point",
-            coordinates: [parsedLongitude, parsedLatitude],
-          },
-          distanceField: "distance",
-          maxDistance: parsedRadius,
-          spherical: true,
-        },
-      },
-      // Future and open/active activities only
-      {
-        $match: {
-          activityDate: { $gt: now },
-          status: { $in: ["active", "open"] },
-        },
-      },
-      // Nearest first
-      {
-        $sort: { distance: 1 },
-      },
-      // Dashboard limit
-      {
-        $limit: 10,
-      },
-      // Host / Creator info
-      {
-        $lookup: {
-          from: "users",
-          localField: "createdBy",
-          foreignField: "_id",
-          as: "creator",
-        },
-      },
-      {
-        $unwind: {
-          path: "$creator",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      // Lookup active participations with ObjectId conversion safeguard
-      {
-        $lookup: {
-          from: "participations",
-          let: { activityId: "$_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    {
-                      $eq: [
-                        { $toObjectId: "$activity" },
-                        "$$activityId",
-                      ],
-                    },
-                    { $eq: ["$status", "active"] },
-                  ],
+        if (parsedRadius > MAX_RADIUS) {
+            return res.status(400).json({
+                success: false,
+                message: "Radius cannot exceed 5000 meters.",
+            });
+        }
+
+
+        // =========================================================
+        // 6. CURRENT TIME
+        // =========================================================
+
+        const now = new Date();
+
+
+        // =========================================================
+        // 7. FETCH CURRENT USER
+        // =========================================================
+
+        const user = await UserModel.findById(userObjectId)
+            .select(
+                "_id name email points location createdAt"
+            )
+            .lean();
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found.",
+            });
+        }
+
+
+        // =========================================================
+        // 8. FETCH USER'S PARTICIPATION RECORDS
+        // =========================================================
+        //
+        // IMPORTANT:
+        //
+        // ParticipationModel uses:
+        //
+        // userId
+        // activityId
+        // status
+        //
+        // NOT:
+        //
+        // user
+        // activity
+        //
+        // Active participation status = "joined"
+        //
+        // =========================================================
+
+        const participationRecords =
+            await ParticipationModel.find({
+                userId: userObjectId
+            })
+            .select(
+                "_id userId activityId status joinedAt completedAt pointsAwarded"
+            )
+            .populate({
+                path: "activityId",
+                select: `
+                    _id
+                    title
+                    description
+                    createdBy
+                    activityDate
+                    activityDuration
+                    maxParticipants
+                    registrationDeadline
+                    location
+                    status
+                    points
+                `,
+                populate: {
+                    path: "createdBy",
+                    select: "_id name"
+                }
+            })
+            .lean();
+
+
+        // =========================================================
+        // 9. ACTIVE/JOINED PARTICIPATIONS
+        // =========================================================
+
+        const joinedParticipations =
+            participationRecords.filter(
+                (participation) =>
+                    participation.status === "joined" &&
+                    participation.activityId
+            );
+
+
+        // =========================================================
+        // 10. ACTIVITIES JOINED
+        // =========================================================
+
+        const activitiesJoined =
+            joinedParticipations.length;
+
+
+        // =========================================================
+        // 11. ACTIVITIES CREATED
+        // =========================================================
+
+        const activitiesCreated =
+            await ActivityModel.countDocuments({
+                createdBy: userObjectId
+            });
+
+
+        // =========================================================
+        // 12. UPCOMING ACTIVITIES
+        // =========================================================
+
+        const upcomingActivities =
+            joinedParticipations
+                .filter(
+                    (participation) =>
+                        participation.activityId &&
+                        new Date(
+                            participation.activityId.activityDate
+                        ) > now
+                )
+                .sort(
+                    (a, b) =>
+                        new Date(
+                            a.activityId.activityDate
+                        ) -
+                        new Date(
+                            b.activityId.activityDate
+                        )
+                )
+                .slice(0, 5)
+                .map((participation) => {
+
+                    const activity =
+                        participation.activityId;
+
+                    return {
+                        activityId: activity._id,
+
+                        title: activity.title,
+
+                        activityDate:
+                            activity.activityDate,
+
+                        activityDuration:
+                            activity.activityDuration,
+
+                        registrationDeadline:
+                            activity.registrationDeadline,
+
+                        host:
+                            activity.createdBy?.name ||
+                            "Unknown"
+                    };
+                });
+
+
+        // =========================================================
+        // 13. UPCOMING PLANS
+        // =========================================================
+
+        const upcomingPlans =
+            upcomingActivities.length;
+
+
+        // =========================================================
+        // 14. NEARBY ACTIVITIES
+        // =========================================================
+
+        const nearbyActivities =
+            await ActivityModel.aggregate([
+
+                // -------------------------------------------------
+                // GEO SEARCH
+                // -------------------------------------------------
+
+                {
+                    $geoNear: {
+                        near: {
+                            type: "Point",
+                            coordinates: [
+                                parsedLongitude,
+                                parsedLatitude
+                            ]
+                        },
+
+                        distanceField: "distance",
+
+                        maxDistance: parsedRadius,
+
+                        spherical: true
+                    }
                 },
-              },
+
+
+                // -------------------------------------------------
+                // ONLY FUTURE ACTIVE ACTIVITIES
+                // -------------------------------------------------
+
+                {
+                    $match: {
+                        activityDate: {
+                            $gt: now
+                        },
+
+                        status: "active"
+                    }
+                },
+
+
+                // -------------------------------------------------
+                // NEAREST ACTIVITIES FIRST
+                // -------------------------------------------------
+
+                {
+                    $sort: {
+                        distance: 1
+                    }
+                },
+
+
+                // -------------------------------------------------
+                // MAXIMUM 10 ACTIVITIES
+                // -------------------------------------------------
+
+                {
+                    $limit: 10
+                },
+
+
+                // -------------------------------------------------
+                // GET CREATOR
+                // -------------------------------------------------
+
+                {
+                    $lookup: {
+                        from: "users",
+
+                        localField: "createdBy",
+
+                        foreignField: "_id",
+
+                        as: "creator"
+                    }
+                },
+
+
+                {
+                    $unwind: {
+                        path: "$creator",
+
+                        preserveNullAndEmptyArrays: true
+                    }
+                },
+
+
+                // =================================================
+                // GET PARTICIPATIONS
+                // =================================================
+                //
+                // IMPORTANT:
+                //
+                // Participation collection uses:
+                //
+                // activityId
+                // status: "joined"
+                //
+                // NOT:
+                //
+                // activity
+                // status: "active"
+                //
+                // =================================================
+
+                {
+                    $lookup: {
+                        from: "participations",
+
+                        let: {
+                            currentActivityId: "$_id"
+                        },
+
+                        pipeline: [
+
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+
+                                            {
+                                                $eq: [
+                                                    "$activityId",
+                                                    "$$currentActivityId"
+                                                ]
+                                            },
+
+                                            {
+                                                $eq: [
+                                                    "$status",
+                                                    "joined"
+                                                ]
+                                            }
+
+                                        ]
+                                    }
+                                }
+                            }
+
+                        ],
+
+                        as: "joinedParticipations"
+                    }
+                },
+
+
+                // -------------------------------------------------
+                // COUNT PARTICIPANTS
+                // -------------------------------------------------
+
+                {
+                    $addFields: {
+
+                        participantCount: {
+                            $size: "$joinedParticipations"
+                        }
+
+                    }
+                },
+
+
+                // -------------------------------------------------
+                // PROJECT REQUIRED FIELDS
+                // -------------------------------------------------
+
+                {
+                    $project: {
+
+                        _id: 1,
+
+                        title: 1,
+
+                        description: 1,
+
+                        activityDate: 1,
+
+                        activityDuration: 1,
+
+                        maxParticipants: 1,
+
+                        registrationDeadline: 1,
+
+                        location: 1,
+
+                        status: 1,
+
+                        points: 1,
+
+                        distance: 1,
+
+                        participantCount: 1,
+
+                        creator: {
+                            _id: "$creator._id",
+                            name: "$creator.name"
+                        }
+                    }
+                }
+
+            ]);
+
+
+        // =========================================================
+        // 15. FORMAT NEARBY ACTIVITIES
+        // =========================================================
+
+        const formattedNearbyActivities =
+            nearbyActivities.map((activity) => {
+
+                const participantCount =
+                    Number(activity.participantCount) || 0;
+
+                const maxParticipants =
+                    Number(activity.maxParticipants) || 1;
+
+
+                // -------------------------------------------------
+                // REGISTRATION STATUS
+                // -------------------------------------------------
+
+                let registrationStatus =
+                    "Registration Open";
+
+
+                if (
+                    activity.registrationDeadline &&
+                    new Date(
+                        activity.registrationDeadline
+                    ) <= now
+                ) {
+
+                    registrationStatus =
+                        "Registration Closed";
+                }
+
+
+                // -------------------------------------------------
+                // FULL CHECK
+                // -------------------------------------------------
+
+                if (
+                    participantCount >=
+                    maxParticipants
+                ) {
+
+                    registrationStatus =
+                        "Full";
+                }
+
+
+                // -------------------------------------------------
+                // PARTICIPATION PERCENTAGE
+                // -------------------------------------------------
+
+                const participationPercentage =
+                    Math.min(
+                        100,
+                        Math.round(
+                            (
+                                participantCount /
+                                maxParticipants
+                            ) * 100
+                        )
+                    );
+
+
+                return {
+
+                    activityId:
+                        activity._id,
+
+                    title:
+                        activity.title,
+
+                    description:
+                        activity.description,
+
+                    // Distance is kept because
+                    // frontend needs it.
+
+                    distance:
+                        Math.round(
+                            activity.distance
+                        ),
+
+                    activityDate:
+                        activity.activityDate,
+
+                    duration:
+                        activity.activityDuration,
+
+                    maxParticipants:
+                        maxParticipants,
+
+                    participantCount:
+                        participantCount,
+
+                    spotsFilled:
+                        `${participantCount} / ${maxParticipants}`,
+
+                    participationPercentage:
+                        participationPercentage,
+
+                    points:
+                        activity.points || 0,
+
+                    status:
+                        activity.status,
+
+                    registrationStatus,
+
+                    hostedBy:
+                        activity.creator?.name ||
+                        "Unknown",
+
+                    createdBy:
+                        activity.creator?._id ||
+                        null
+                };
+            });
+
+
+        // =========================================================
+        // 16. FETCH REWARDS
+        // =========================================================
+
+        const rewards =
+            await RewardModel.find({})
+                .select(`
+                    _id
+                    title
+                    description
+                    pointsRequired
+                    voucherValue
+                    voucherProvider
+                    expiryDate
+                `)
+                .sort({
+                    pointsRequired: 1
+                })
+                .limit(5)
+                .lean();
+
+
+        // =========================================================
+        // 17. FORMAT REWARDS
+        // =========================================================
+
+        const formattedRewards =
+            rewards.map((reward) => ({
+
+                rewardId:
+                    reward._id,
+
+                title:
+                    reward.title,
+
+                description:
+                    reward.description,
+
+                pointsRequired:
+                    reward.pointsRequired,
+
+                voucherValue:
+                    reward.voucherValue,
+
+                voucherProvider:
+                    reward.voucherProvider,
+
+                expiryDate:
+                    reward.expiryDate,
+
+                available:
+                    (user.points || 0) >=
+                    reward.pointsRequired
+
+            }));
+
+
+        // =========================================================
+        // 18. FINAL RESPONSE
+        // =========================================================
+
+        return res.status(200).json({
+
+            success: true,
+
+            message:
+                "Dashboard data fetched successfully.",
+
+
+            // -------------------------------------------------
+            // USER
+            // -------------------------------------------------
+
+            user: {
+
+                id:
+                    user._id,
+
+                name:
+                    user.name,
+
+                email:
+                    user.email,
+
+                points:
+                    user.points || 0,
+
+                location:
+                    user.location,
+
+                createdAt:
+                    user.createdAt
             },
-          ],
-          as: "activeParticipations",
-        },
-      },
-      // Count participants via array size ($size avoids empty array count crashes)
-      {
-        $addFields: {
-          participantCount: { $size: "$activeParticipations" },
-        },
-      },
-      // Project fields
-      {
-        $project: {
-          _id: 1,
-          title: 1,
-          description: 1,
-          activityDate: 1,
-          activityDuration: 1,
-          maxParticipants: 1,
-          registrationDeadline: 1,
-          location: 1,
-          status: 1,
-          points: 1,
-          distance: 1,
-          participantCount: 1,
-          creator: {
-            _id: "$creator._id",
-            name: "$creator.name",
-          },
-        },
-      },
-    ]);
 
-    // --------------------------------------------------
-    // 15. Format nearby activities
-    // --------------------------------------------------
-    const formattedNearbyActivities = nearbyActivities.map((activity) => {
-      const participantCount = Number(activity.participantCount) || 0;
-      const maxParticipants = Number(activity.maxParticipants) || 1;
 
-      let registrationStatus = "Registration Open";
+            // -------------------------------------------------
+            // STATISTICS
+            // -------------------------------------------------
 
-      if (
-        activity.registrationDeadline &&
-        new Date(activity.registrationDeadline) <= now
-      ) {
-        registrationStatus = "Registration Closed";
-      }
+            statistics: {
 
-      if (participantCount >= maxParticipants) {
-        registrationStatus = "Full";
-      }
+                availablePoints:
+                    user.points || 0,
 
-      return {
-        activityId: activity._id,
-        title: activity.title,
-        description: activity.description,
-        distance: Math.round(activity.distance),
-        activityDate: activity.activityDate,
-        duration: activity.activityDuration,
-        maxParticipants,
-        participantCount,
-        participants: participantCount,
-        spotsFilled: `${participantCount} / ${maxParticipants}`,
-        participationPercentage:
-          maxParticipants > 0
-            ? Math.min(
-                100,
-                Math.round((participantCount / maxParticipants) * 100)
-              )
-            : 0,
-        points: activity.points || 0,
-        status: activity.status,
-        registrationStatus,
-        hostedBy: activity.creator?.name || "Unknown",
-        createdBy: activity.creator?._id || null,
-      };
-    });
+                activitiesJoined:
+                    activitiesJoined,
 
-    // --------------------------------------------------
-    // 16. Fetch rewards
-    // --------------------------------------------------
-    const rewards = await RewardModel.find({})
-      .select(`
-        _id
-        title
-        description
-        pointsRequired
-        voucherValue
-        voucherProvider
-        expiryDate
-      `)
-      .sort({ pointsRequired: 1 })
-      .limit(5)
-      .lean();
+                activitiesCreated:
+                    activitiesCreated,
 
-    // --------------------------------------------------
-    // 17. Format rewards
-    // --------------------------------------------------
-    const formattedRewards = rewards.map((reward) => ({
-      rewardId: reward._id,
-      title: reward.title,
-      description: reward.description,
-      pointsRequired: reward.pointsRequired,
-      voucherValue: reward.voucherValue,
-      voucherProvider: reward.voucherProvider,
-      expiryDate: reward.expiryDate,
-      available: (user.points || 0) >= reward.pointsRequired,
-    }));
+                upcomingPlans:
+                    upcomingPlans
+            },
 
-    // --------------------------------------------------
-    // 18. Final dashboard response
-    // --------------------------------------------------
-    return res.status(200).json({
-      success: true,
-      message: "Dashboard data fetched successfully.",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        points: user.points || 0,
-        location: user.location,
-        createdAt: user.createdAt,
-      },
-      statistics: {
-        availablePoints: user.points || 0,
-        activitiesJoined,
-        activitiesCreated,
-        upcomingPlans,
-      },
-      location: {
-        longitude: parsedLongitude,
-        latitude: parsedLatitude,
-        radius: parsedRadius,
-      },
-      nearbyActivities: formattedNearbyActivities,
-      upcomingSchedule: upcomingActivities,
-      rewardsWallet: {
-        balance: user.points || 0,
-        rewards: formattedRewards,
-      },
-    });
-  } catch (error) {
-    console.error("getDashboardHandler error:", error);
 
-    if (error instanceof mongoose.Error.CastError) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid dashboard data.",
-      });
+            // -------------------------------------------------
+            // REQUEST LOCATION
+            // -------------------------------------------------
+
+            location: {
+
+                longitude:
+                    parsedLongitude,
+
+                latitude:
+                    parsedLatitude,
+
+                radius:
+                    parsedRadius
+            },
+
+
+            // -------------------------------------------------
+            // NEARBY ACTIVITIES
+            // -------------------------------------------------
+
+            nearbyActivities:
+                formattedNearbyActivities,
+
+
+            // -------------------------------------------------
+            // UPCOMING SCHEDULE
+            // -------------------------------------------------
+
+            upcomingSchedule:
+                upcomingActivities,
+
+
+            // -------------------------------------------------
+            // REWARDS
+            // -------------------------------------------------
+
+            rewardsWallet: {
+
+                balance:
+                    user.points || 0,
+
+                rewards:
+                    formattedRewards
+            }
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "getDashboardHandler error:",
+            error
+        );
+
+
+        // =====================================================
+        // MONGOOSE CAST ERROR
+        // =====================================================
+
+        if (
+            error instanceof mongoose.Error.CastError
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Invalid dashboard data."
+
+            });
+        }
+
+
+        // =====================================================
+        // SERVER ERROR
+        // =====================================================
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Failed to fetch dashboard data.",
+
+            ...(process.env.NODE_ENV === "development" && {
+                error: error.message
+            })
+
+        });
     }
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch dashboard data.",
-      ...(process.env.NODE_ENV === "development" && {
-        error: error.message,
-      }),
-    });
-  }
 };
+
 
 module.exports = {
     getDashboardHandler
