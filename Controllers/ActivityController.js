@@ -2,7 +2,7 @@ const UserModel = require("../Models/UserModel")
 const ActivityModel = require("../Models/ActivityModel");
 const ParticipationModel = require("../Models/ParticipationModel");
 const PointTransactionModel = require("../Models/PointTransactionModel");
-const {getParticipantCount} = require("../Services/ParticipationService");
+const {getJoinedParticipantCount} = require("../Services/ParticipationService");
 
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
@@ -1527,6 +1527,651 @@ async function getNearbyActivityHandler(req, res) {
     }
 }
 
+async function getHostedActivitiesHandler(req, res) {
+    try {
+
+        // =========================================================
+        // 1. AUTHENTICATION VALIDATION
+        // =========================================================
+
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized access."
+            });
+        }
+
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid authenticated user."
+            });
+        }
+
+        const userObjectId = new mongoose.Types.ObjectId(userId);
+
+
+        // =========================================================
+        // 2. CURRENT TIME
+        // =========================================================
+
+        const currentTime = new Date();
+
+
+        // =========================================================
+        // 3. FETCH HOSTED ACTIVITIES
+        // =========================================================
+        //
+        // ActivityModel uses:
+        //
+        // createdBy
+        //
+        // Therefore we MUST NOT use:
+        //
+        // user
+        // createdByUser
+        // host
+        //
+        // =========================================================
+
+        const hostedActivities =
+            await ActivityModel.find({
+                createdBy: userObjectId
+            })
+            .sort({
+                activityDate: 1
+            })
+            .lean();
+
+
+        // =========================================================
+        // 4. NO HOSTED ACTIVITIES
+        // =========================================================
+
+        if (hostedActivities.length === 0) {
+
+            return res.status(200).json({
+
+                success: true,
+
+                message:
+                    "Hosted activities fetched successfully.",
+
+                statistics: {
+
+                    activeHosting: 0,
+
+                    totalNeighborsJoined: 0,
+
+                    successfullyCompleted: 0
+
+                },
+
+                tabs: {
+
+                    all: 0,
+
+                    active: 0,
+
+                    completed: 0,
+
+                    cancelled: 0
+
+                },
+
+                activities: []
+            });
+        }
+
+
+        // =========================================================
+        // 5. GET ACTIVITY IDs
+        // =========================================================
+
+        const activityIds =
+            hostedActivities.map(
+                activity => activity._id
+            );
+
+
+        // =========================================================
+        // 6. FETCH PARTICIPATIONS
+        // =========================================================
+        //
+        // IMPORTANT:
+        //
+        // ParticipationModel uses:
+        //
+        // userId
+        // activityId
+        // status
+        //
+        // Active participation = "joined"
+        //
+        // =========================================================
+
+        const participations =
+            await ParticipationModel.find({
+
+                activityId: {
+                    $in: activityIds
+                }
+
+            })
+            .select(
+                "_id userId activityId status joinedAt completedAt pointsAwarded"
+            )
+            .lean();
+
+
+        // =========================================================
+        // 7. CREATE PARTICIPATION MAP
+        // =========================================================
+        //
+        // This avoids querying ParticipationModel separately
+        // for every activity.
+        //
+        // Example:
+        //
+        // activityId -> [
+        //     participation,
+        //     participation,
+        //     ...
+        // ]
+        //
+        // =========================================================
+
+        const participationMap = new Map();
+
+
+        for (const participation of participations) {
+
+            const activityId =
+                participation.activityId.toString();
+
+            if (!participationMap.has(activityId)) {
+
+                participationMap.set(
+                    activityId,
+                    []
+                );
+            }
+
+            participationMap
+                .get(activityId)
+                .push(participation);
+        }
+
+
+        // =========================================================
+        // 8. ACTIVITY STATISTICS
+        // =========================================================
+
+        let activeHosting = 0;
+
+        let totalNeighborsJoined = 0;
+
+        let successfullyCompleted = 0;
+
+        let totalRewardPointsDisbursed = 0;
+
+
+        // =========================================================
+        // 9. TAB COUNTS
+        // =========================================================
+
+        let allCount =
+            hostedActivities.length;
+
+        let activeCount = 0;
+
+        let completedCount = 0;
+
+        let cancelledCount = 0;
+
+
+        // =========================================================
+        // 10. FORMAT HOSTED ACTIVITIES
+        // =========================================================
+
+        const formattedActivities =
+            hostedActivities.map((activity) => {
+
+                const activityId =
+                    activity._id.toString();
+
+
+                const activityParticipations =
+                    participationMap.get(
+                        activityId
+                    ) || [];
+
+
+                // -------------------------------------------------
+                // COUNT CURRENTLY JOINED PARTICIPANTS
+                // -------------------------------------------------
+
+                const participantCount =
+                    activityParticipations.filter(
+                        participation =>
+                            participation.status === "joined"
+                    ).length;
+
+
+                // -------------------------------------------------
+                // COUNT COMPLETED PARTICIPATIONS
+                // -------------------------------------------------
+
+                const completedParticipantCount =
+                    activityParticipations.filter(
+                        participation =>
+                            participation.status === "completed"
+                    ).length;
+
+
+                // -------------------------------------------------
+                // POINTS DISBURSED
+                // -------------------------------------------------
+
+                const pointsDisbursed =
+                    activityParticipations.reduce(
+                        (total, participation) => {
+
+                            if (
+                                participation.status ===
+                                "completed"
+                            ) {
+                                return total +
+                                    (
+                                        Number(
+                                            participation.pointsAwarded
+                                        ) || 0
+                                    );
+                            }
+
+                            return total;
+                        },
+                        0
+                    );
+
+
+                // -------------------------------------------------
+                // ACTIVE HOSTING
+                // -------------------------------------------------
+
+                if (activity.status === "active") {
+
+                    activeHosting++;
+
+                    activeCount++;
+                }
+
+
+                // -------------------------------------------------
+                // COMPLETED
+                // -------------------------------------------------
+
+                if (activity.status === "completed") {
+
+                    successfullyCompleted++;
+
+                    completedCount++;
+                }
+
+
+                // -------------------------------------------------
+                // CANCELLED
+                // -------------------------------------------------
+
+                if (activity.status === "cancelled") {
+
+                    cancelledCount++;
+                }
+
+
+                // -------------------------------------------------
+                // TOTAL JOINED
+                // -------------------------------------------------
+
+                totalNeighborsJoined +=
+                    participantCount;
+
+
+                // -------------------------------------------------
+                // TOTAL REWARD POINTS
+                // -------------------------------------------------
+
+                totalRewardPointsDisbursed +=
+                    pointsDisbursed;
+
+
+                // -------------------------------------------------
+                // PARTICIPATION PERCENTAGE
+                // -------------------------------------------------
+
+                const maxParticipants =
+                    Number(
+                        activity.maxParticipants
+                    ) || 0;
+
+
+                const participationPercentage =
+                    maxParticipants > 0
+                        ? Math.min(
+                            100,
+                            Math.round(
+                                (
+                                    participantCount /
+                                    maxParticipants
+                                ) * 100
+                            )
+                        )
+                        : 0;
+
+
+                // -------------------------------------------------
+                // SPOTS FILLED
+                // -------------------------------------------------
+
+                const spotsFilled =
+                    `${participantCount} / ${maxParticipants}`;
+
+
+                // -------------------------------------------------
+                // REGISTRATION STATUS
+                // -------------------------------------------------
+
+                let registrationStatus =
+                    "Registration Open";
+
+
+                if (
+                    activity.status === "cancelled"
+                ) {
+
+                    registrationStatus =
+                        "Cancelled";
+
+                } else if (
+                    activity.status === "completed"
+                ) {
+
+                    registrationStatus =
+                        "Completed";
+
+                } else if (
+                    activity.status === "closed"
+                ) {
+
+                    registrationStatus =
+                        "Closed";
+
+                } else if (
+                    activity.registrationDeadline &&
+                    new Date(
+                        activity.registrationDeadline
+                    ) <= currentTime
+                ) {
+
+                    registrationStatus =
+                        "Registration Closed";
+
+                } else if (
+                    participantCount >=
+                    maxParticipants
+                ) {
+
+                    registrationStatus =
+                        "Full";
+                }
+
+
+                // -------------------------------------------------
+                // RETURN ACTIVITY
+                // -------------------------------------------------
+
+                return {
+
+                    activityId:
+                        activity._id,
+
+                    title:
+                        activity.title,
+
+                    description:
+                        activity.description,
+
+                    location:
+                        activity.location,
+
+                    activityDate:
+                        activity.activityDate,
+
+                    activityDuration:
+                        activity.activityDuration,
+
+                    registrationDeadline:
+                        activity.registrationDeadline,
+
+                    maxParticipants:
+                        maxParticipants,
+
+                    status:
+                        activity.status,
+
+                    closureReason:
+                        activity.closureReason || null,
+
+                    createdAt:
+                        activity.createdAt,
+
+                    updatedAt:
+                        activity.updatedAt,
+
+
+                    // Participant information
+                    participantCount:
+
+                        participantCount,
+
+                    completedParticipantCount:
+
+                        completedParticipantCount,
+
+                    spotsFilled:
+
+                        spotsFilled,
+
+                    participationPercentage:
+
+                        participationPercentage,
+
+
+                    // Reward information
+                    pointsDisbursed:
+
+                        pointsDisbursed,
+
+
+                    registrationStatus:
+
+                        registrationStatus
+                };
+            });
+
+
+        // =========================================================
+        // 11. SORT ACTIVITIES
+        // =========================================================
+        //
+        // Active/upcoming activities appear first.
+        // Older/completed activities appear afterwards.
+        //
+        // =========================================================
+
+        formattedActivities.sort(
+            (a, b) => {
+
+                const dateA =
+                    new Date(a.activityDate);
+
+                const dateB =
+                    new Date(b.activityDate);
+
+                return dateA - dateB;
+            }
+        );
+
+
+        // =========================================================
+        // 12. SUCCESS RESPONSE
+        // =========================================================
+
+        return res.status(200).json({
+
+            success: true,
+
+            message:
+                "Hosted activities fetched successfully.",
+
+
+            // =====================================================
+            // SUMMARY CARDS
+            // =====================================================
+
+            statistics: {
+
+                // "ACTIVE HOSTING"
+                activeHosting:
+                    activeHosting,
+
+                // "TOTAL NEIGHBORS JOINED"
+                totalNeighborsJoined:
+                    totalNeighborsJoined,
+
+                // "SUCCESSFULLY COMPLETED"
+                successfullyCompleted:
+                    successfullyCompleted,
+
+                // Useful if frontend later wants to show
+                // total points distributed.
+                rewardPointsDisbursed:
+                    totalRewardPointsDisbursed
+            },
+
+
+            // =====================================================
+            // FILTER / TAB COUNTS
+            // =====================================================
+
+            tabs: {
+
+                // All hosted activities
+                all:
+                    allCount,
+
+                // Currently active hosted activities
+                active:
+                    activeCount,
+
+                // Successfully completed hosted activities
+                completed:
+                    completedCount,
+
+                // Cancelled hosted activities
+                cancelled:
+                    cancelledCount
+            },
+
+
+            // =====================================================
+            // HOSTED ACTIVITIES
+            // =====================================================
+
+            activities:
+                formattedActivities,
+
+
+            // =====================================================
+            // TOTAL
+            // =====================================================
+
+            count:
+                formattedActivities.length
+        });
+
+
+    } catch (error) {
+
+        console.error(
+            "getHostedActivitiesHandler error:",
+            error
+        );
+
+
+        // =========================================================
+        // MONGOOSE CAST ERROR
+        // =========================================================
+
+        if (
+            error instanceof mongoose.Error.CastError
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Invalid hosted activity data."
+            });
+        }
+
+
+        // =========================================================
+        // MONGOOSE VALIDATION ERROR
+        // =========================================================
+
+        if (
+            error instanceof mongoose.Error.ValidationError
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                message:
+                    "Hosted activity validation failed.",
+
+                errors:
+                    Object.values(
+                        error.errors
+                    ).map(
+                        err => err.message
+                    )
+            });
+        }
+
+
+        // =========================================================
+        // INTERNAL SERVER ERROR
+        // =========================================================
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Failed to fetch hosted activities.",
+
+            ...(process.env.NODE_ENV === "development" && {
+                error: error.message
+            })
+        });
+    }
+}
+
 async function cancelActivityHandler(req, res){
     try{
 
@@ -2629,6 +3274,7 @@ module.exports={
     getActivityHandler,
     updateActivityHandler,
     getNearbyActivityHandler,
+    getHostedActivitiesHandler,
     cancelActivityHandler,
     closeActivityHandler,
     completeActivityHandler

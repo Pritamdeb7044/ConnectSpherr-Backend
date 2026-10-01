@@ -8,6 +8,7 @@ const {
     getActivityHandler,
     updateActivityHandler,
     getNearbyActivityHandler,
+    getHostedActivitiesHandler,
     cancelActivityHandler,
     closeActivityHandler,
     completeActivityHandler
@@ -16,7 +17,8 @@ const {
 
 activityRouter
     .post("/createactivity",protectedRouteMiddleware, createActivityHandler)
-    .get("/nearby",getNearbyActivityHandler)
+    .get("/nearby",protectedRouteMiddleware, getNearbyActivityHandler)
+    .get("/hosted", protectedRouteMiddleware, getHostedActivitiesHandler)
     .get("/:activityId", getActivityHandler)
     .patch("/:activityId",protectedRouteMiddleware,updateActivityHandler)
     .patch("/:activityId/close",protectedRouteMiddleware, closeActivityHandler)
