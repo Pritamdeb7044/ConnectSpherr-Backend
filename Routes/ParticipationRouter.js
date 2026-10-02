@@ -7,6 +7,7 @@ const {
     joinActivityHandler,
     leaveActivityHandler,
     myJoinedActivitiesHandler,
+    getUpcomingScheduleHandler,
     getMyParticipationHandler,
     getActivityParticipantsHandler
 } = require("../Controllers/ParticipationController");
@@ -17,5 +18,6 @@ participationRouter
     .get("/my-participations", protectedRouteMiddleware, getMyParticipationHandler)
     .get("/:activityId/participants", protectedRouteMiddleware, getActivityParticipantsHandler)
     .get("/my-joined-activities", protectedRouteMiddleware, myJoinedActivitiesHandler)
+    .get("/upcoming-schedule",protectedRouteMiddleware,getUpcomingScheduleHandler)
 
 module.exports = participationRouter

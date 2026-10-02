@@ -2173,6 +2173,7 @@ async function getHostedActivitiesHandler(req, res) {
 }
 
 async function cancelActivityHandler(req, res){
+    const session = await mongoose.startSession();
     try{
 
         const {activityId} = req.params;

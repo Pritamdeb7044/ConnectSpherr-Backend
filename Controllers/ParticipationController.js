@@ -929,6 +929,161 @@ async function myJoinedActivitiesHandler(req, res) {
     }
 }
 
+async function getUpcomingScheduleHandler(req, res) {
+    try {
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({
+                message: "Unauthorized access",
+                status: "failure"
+            });
+        }
+
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({
+                message: "Invalid authenticated user",
+                status: "failure"
+            });
+        }
+        const userObjectId = new mongoose.Types.ObjectId(userId);
+
+        const currentTime = new Date();
+
+        // =========================================================
+        // 4. FETCH USER'S JOINED PARTICIPATIONS
+        // =========================================================
+        //
+        // ParticipationModel uses:
+        //
+        // userId
+        // activityId
+        // status: "joined"
+        //
+        // Only currently joined participations are relevant.
+        //
+        // =========================================================
+
+        const participations = await ParticipationModel
+                .find({
+                    userId: userObjectId,
+                    status: "joined"
+                })
+                .select(
+                    "_id userId activityId status joinedAt"
+                )
+                .populate({
+                    path: "activityId",
+                    select: `
+                        _id
+                        title
+                        description
+                        createdBy
+                        location
+                        activityDate
+                        activityDuration
+                        registrationDeadline
+                        maxParticipants
+                        status
+                        closureReason
+                        createdAt
+                        updatedAt
+                    `,
+                    populate: {
+                        path: "createdBy",
+                        select: "_id name email"
+                    }
+                })
+                .lean();
+
+
+        // =========================================================
+        // 5. FILTER UPCOMING ACTIVITIES
+        // =========================================================
+        //
+        // An activity is considered upcoming when:
+        //
+        // 1. Activity reference exists
+        // 2. Activity date is in the future
+        // 3. Activity is not cancelled
+        // 4. Activity is not completed
+        //
+        // "closed" is intentionally allowed here.
+        //
+        // A closed activity can still be an upcoming activity
+        // if registration has closed or the activity became full.
+        //
+        // =========================================================
+
+        const upcomingActivities = participations
+                .filter(participation => {
+                    const activity = participation.activityId;
+
+                    if (!activity) {
+                        return false;
+                    }
+
+                    if (activity.status === "cancelled" || activity.status === "completed"){
+                        return false;
+                    }
+                    if (!activity.activityDate) {
+                        return false;
+                    }
+                    return (new Date(activity.activityDate) > currentTime);
+                })
+                .sort((a, b) => {
+                    return (
+                        new Date(a.activityId.activityDate) - new Date(b.activityId.activityDate));
+                })
+                .map(participation => {
+                    const activity = participation.activityId;
+
+                    return{
+                        activityId: activity._id,
+                        title: activity.title,
+                        description: activity.description,
+                        location: activity.location,
+                        activityDate: activity.activityDate,
+                        activityDuration: activity.activityDuration,
+                        registrationDeadline: activity.registrationDeadline,
+                        maxParticipants: activity.maxParticipants,
+                        status: activity.status,
+                        closureReason: activity.closureReason || null,
+                        host: activity.createdBy?.name || "Unknown",
+                        createdBy: activity.createdBy?._id || null,
+                        joinedAt: participation.joinedAt
+                    };
+                });
+
+        return res.status(200).json({
+            message:"Upcoming schedule fetched successfully",
+            count:upcomingActivities.length,
+            upcomingSchedule:upcomingActivities,
+            status: "success"
+        });
+    }catch(err){
+        console.error("Get upcoming schedule error:",err);
+        if (err instanceof mongoose.Error.CastError){
+            return res.status(400).json({
+                message: "Invalid activity or participation data",
+                status: "failure"
+            });
+        }
+        if(err instanceof mongoose.Error.ValidationError){
+            return res.status(400).json({
+                message: "Participation validation failed",
+                errors:Object.values(err.errors)
+                    .map(error => error.message),
+                status: "failure"
+            });
+        }
+        return res.status(500).json({
+            message: "Unable to fetch upcoming schedule. Please try again later.",
+            status: "failure"
+        });
+    }
+}
+
 async function getMyParticipationHandler(req, res) {
 
     try {
@@ -1317,6 +1472,7 @@ module.exports = {
     joinActivityHandler,
     leaveActivityHandler,
     myJoinedActivitiesHandler,
+    getUpcomingScheduleHandler,
     getMyParticipationHandler,
     getActivityParticipantsHandler
 }
