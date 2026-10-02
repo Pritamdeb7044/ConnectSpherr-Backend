@@ -718,6 +718,217 @@ async function leaveActivityHandler(req, res) {
     }
 }
 
+async function myJoinedActivitiesHandler(req, res) {
+    try {
+        if (!req.user || !req.user._id) {
+            return res.status(401).json({
+                message: "Unauthorized access",
+                status: "failure"
+            });
+        }
+        const userId = req.user._id;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(401).json({
+                message: "Invalid authenticated user",
+                status: "failure"
+            });
+        }
+
+        const userObjectId = new mongoose.Types.ObjectId(userId);
+
+
+        // =========================================================
+        // 3. FIND USER'S JOINED PARTICIPATIONS
+        // =========================================================
+        //
+        // ParticipationModel uses:
+        //
+        // userId
+        // activityId
+        // status: "joined"
+        //
+        // Therefore we only retrieve currently joined
+        // participation records.
+        //
+        // =========================================================
+
+        const participations =
+            await ParticipationModel
+                .find({
+                    userId: userObjectId,
+                    status: "joined"
+                })
+                .select(
+                    "_id userId activityId status joinedAt"
+                )
+                .populate({
+                    path: "activityId",
+                    select: `
+                        _id
+                        title
+                        description
+                        createdBy
+                        location
+                        activityDate
+                        activityDuration
+                        registrationDeadline
+                        maxParticipants
+                        status
+                        closureReason
+                        createdAt
+                        updatedAt
+                    `,
+                    populate: {
+                        path: "createdBy",
+                        select: "_id name email"
+                    }
+                })
+                .sort({
+                    joinedAt: -1
+                })
+                .lean();
+
+
+        // =========================================================
+        // 4. REMOVE INVALID ACTIVITY REFERENCES
+        // =========================================================
+        //
+        // If an activity was deleted and the participation still
+        // exists, populate() will return activityId: null.
+        //
+        // Such a record should not be returned as a joined activity.
+        //
+        // =========================================================
+
+        const validParticipations =
+            participations.filter(
+                participation =>
+                    participation.activityId
+            );
+
+
+        // =========================================================
+        // 5. REMOVE COMPLETED / CANCELLED ACTIVITIES
+        // =========================================================
+        //
+        // A participation may still have:
+        //
+        // status: "joined"
+        //
+        // while the corresponding activity has subsequently
+        // become completed or cancelled.
+        //
+        // Those activities must NOT appear in this endpoint.
+        //
+        // =========================================================
+
+        const joinedActivities =
+            validParticipations
+                .filter(
+                    participation => {
+
+                        const activity =
+                            participation.activityId;
+
+                        return (
+                            activity.status !== "completed" &&
+                            activity.status !== "cancelled"
+                        );
+                    }
+                )
+                .map(
+                    participation => {
+
+                        const activity =
+                            participation.activityId;
+
+                        return {
+
+                            activityId:
+                                activity._id,
+
+                            title:
+                                activity.title,
+
+                            description:
+                                activity.description,
+
+                            createdBy:
+                                activity.createdBy,
+
+                            location:
+                                activity.location,
+
+                            activityDate:
+                                activity.activityDate,
+
+                            activityDuration:
+                                activity.activityDuration,
+
+                            registrationDeadline:
+                                activity.registrationDeadline,
+
+                            maxParticipants:
+                                activity.maxParticipants,
+
+                            status:
+                                activity.status,
+
+                            closureReason:
+                                activity.closureReason || null,
+
+                            createdAt:
+                                activity.createdAt,
+
+                            updatedAt:
+                                activity.updatedAt,
+
+                            // Information about the user's
+                            // participation.
+                            joinedAt:
+                                participation.joinedAt,
+
+                            participationStatus:
+                                participation.status
+                        };
+                    }
+                );
+
+        return res.status(200).json({
+            message: "Joined activities fetched successfully",
+            count: joinedActivities.length,
+            activities: joinedActivities,
+            status: "success"
+        });
+
+
+    } catch (err) {
+        console.error("My joined activities error:",err);
+
+        if (err instanceof mongoose.Error.CastError){
+            return res.status(400).json({
+                message: "Invalid activity or participation data",
+                status: "failure"
+            });
+        }
+
+        if (err instanceof mongoose.Error.ValidationError){
+            return res.status(400).json({
+                message: "Participation validation failed",
+                errors: Object.values(err.errors)
+                    .map(error => error.message),
+                status: "failure"
+            });
+        }
+
+        return res.status(500).json({
+            message: "Unable to fetch joined activities. Please try again later.",
+            status: "failure"
+        });
+    }
+}
+
 async function getMyParticipationHandler(req, res) {
 
     try {
@@ -1105,6 +1316,7 @@ async function getActivityParticipantsHandler(req, res) {
 module.exports = {
     joinActivityHandler,
     leaveActivityHandler,
+    myJoinedActivitiesHandler,
     getMyParticipationHandler,
     getActivityParticipantsHandler
 }
